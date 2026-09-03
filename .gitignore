@@ -8,6 +8,10 @@ poc/tunnel/_work/
 *.pcap
 *.log
 
+# 편집기 설정과 작업 지침 (이 리포에 담지 않는다)
+CLAUDE.md
+.claude/
+
 # 편집기·OS
 .DS_Store
 *.swp
