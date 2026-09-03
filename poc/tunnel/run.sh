@@ -226,6 +226,12 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
     else
       printf '  ok    %s\n' "허가된 연결은 그대로 지난다"
     fi
+    saw "$WORK/b/csa.log" "들어온 연결을 받았습니다.*상대 srv-a.*관측한 출발지 $IP_A" \
+        "기록에 peer-id와 관측한 출발지가 함께 남는다"
+    n=$(grep -c "들어온 연결을 받았습니다" "$WORK/b/csa.log" || true)
+    if [ "$n" -le 3 ]; then printf '  ok    %s\n' "연결마다 한 번만 적는다 ($n줄)"
+    else printf '  틀림  %s\n' "패킷마다 적고 있다 ($n줄)"; POL_OK=0; fi
+
     [ "$POL_OK" = 1 ] || { echo; echo "--- a의 로그 ---"; grep 막았습니다 "$WORK/a/csa.log" || true
                            echo "--- b의 로그 ---"; grep 막았습니다 "$WORK/b/csa.log" || true; exit 1; }
     echo
