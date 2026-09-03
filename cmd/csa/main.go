@@ -7,9 +7,13 @@ import (
 	"encoding/base64"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/randyinthedev-hash/callsignet/internal/config"
+	"github.com/randyinthedev-hash/callsignet/internal/wgdev"
 )
 
 const usage = `csa — Callsignet agent
@@ -35,8 +39,10 @@ func main() {
 		err = runCheck(args)
 	case "genkey":
 		err = runGenkey(args)
-	case "run", "status", "reload":
-		err = fmt.Errorf("%s는 아직 만들지 않았습니다", cmd)
+	case "run":
+		err = runRun(args)
+	case "status", "reload":
+		err = fmt.Errorf("아직 만들지 않았습니다: %s", cmd)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -67,6 +73,38 @@ func runCheck(args []string) error {
 		fmt.Fprintln(os.Stderr, "  "+p)
 	}
 	os.Exit(1)
+	return nil
+}
+
+func runRun(args []string) error {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	dir := fs.String("c", "/etc/callsignet", "설정 디렉터리")
+	fs.Parse(args)
+
+	cfg, err := config.Load(*dir)
+	if err != nil {
+		return err
+	}
+	if problems := cfg.Validate(); len(problems) > 0 {
+		fmt.Fprintf(os.Stderr, "설정에 어긋난 곳이 %d군데 있습니다.\n\n", len(problems))
+		for _, p := range problems {
+			fmt.Fprintln(os.Stderr, "  "+p)
+		}
+		return fmt.Errorf("설정을 고치고 다시 띄우십시오")
+	}
+
+	logf := func(f string, a ...any) { log.Printf(f, a...) }
+	dev, err := wgdev.Open(cfg, logf)
+	if err != nil {
+		return err
+	}
+	defer dev.Close()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	logf("csa가 돕니다. 멈추려면 Ctrl-C를 누르십시오.")
+	<-stop
+	logf("멈춥니다.")
 	return nil
 }
 
