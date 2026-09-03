@@ -7,7 +7,9 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/randyinthedev-hash/callsignet/internal/config"
 	"github.com/randyinthedev-hash/callsignet/internal/policy"
@@ -24,6 +26,24 @@ type Device struct {
 	dev  *device.Device
 	// snap은 설정에서 뽑아 둔 값들이다. csa reload가 통째로 갈아 끼운다.
 	snap atomic.Pointer[snapshot]
+	// eps는 wg에게 물어 얻은 상대별 접속 주소를 잠깐 들고 있는 자리다.
+	eps endpoints
+}
+
+// endpointTTL은 wg에게 접속 주소를 다시 묻기까지 기다리는 시간이다.
+//
+// 묻는 것이 값싸지 않다. wg가 IpcGet에서 상태 전체를 문자열로 만들어 내놓기
+// 때문이다. IP 대역 규칙은 패킷마다 이 값을 보므로 그때마다 물을 수 없다.
+//
+// 여기서 오는 결과가 하나 있다. 상대가 다른 자리로 옮겨 가면 IP 대역 규칙이
+// 그것을 이 시간만큼 늦게 안다. 대역은 상대를 확정하는 근거가 아니라 그 위에
+// 더한 조건이므로, 이만큼의 늦음을 받아들인다.
+const endpointTTL = time.Second
+
+type endpoints struct {
+	mu   sync.Mutex
+	at   time.Time
+	byID map[string]string
 }
 
 // snapshot은 설정에서 미리 뽑아 둔 것이다. 패킷마다 설정을 훑지 않으려고 둔다.
@@ -147,19 +167,36 @@ func (d *Device) Reload(c *config.Config) error {
 	return nil
 }
 
-// endpointOf는 그 상대에게서 패킷이 실제로 온 주소를 wg에게 물어 돌려준다.
-// wg가 복호화하면서 짝을 맞춰 둔 값이다. 인증을 통과한 패킷일 때만 갱신되므로
-// 아무나 이 값을 바꿀 수 없다.
+// endpointOf는 그 상대에게서 패킷이 실제로 온 주소를 돌려준다. wg가 복호화하면서
+// 짝을 맞춰 둔 값이다. 인증을 통과한 패킷일 때만 갱신되므로 아무나 이 값을 바꿀
+// 수 없다. endpointTTL 동안은 앞서 물어 둔 값을 그대로 쓴다.
 func (d *Device) endpointOf(peerID string) string {
-	pub, ok := d.snap.Load().pubOf[peerID]
-	if !ok || d.dev == nil {
-		return ""
+	d.eps.mu.Lock()
+	defer d.eps.mu.Unlock()
+	if now := time.Now(); now.Sub(d.eps.at) > endpointTTL {
+		d.eps.byID = d.readEndpoints()
+		d.eps.at = now
+	}
+	return d.eps.byID[peerID]
+}
+
+// readEndpoints는 wg에게 모든 상대의 접속 주소를 한 번에 묻는다.
+func (d *Device) readEndpoints() map[string]string {
+	out := map[string]string{}
+	if d.dev == nil {
+		return out
 	}
 	state, err := d.dev.IpcGet()
 	if err != nil {
-		return ""
+		return out
 	}
-	return endpointFor(state, pub)
+	byKey := parseStatus(state)
+	for peerID, pub := range d.snap.Load().pubOf {
+		if p, ok := byKey[pub]; ok && p.Endpoint != "" {
+			out[peerID] = p.Endpoint
+		}
+	}
+	return out
 }
 
 // endpointFor는 wg가 내놓은 상태에서 그 공개키의 접속 주소를 찾는다.

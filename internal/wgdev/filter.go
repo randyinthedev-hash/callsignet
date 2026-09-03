@@ -101,9 +101,17 @@ func (f *filter) allowIn(pkt []byte) bool {
 	r := f.rules.Load()
 	var d policy.Decision
 	if p.HasPorts() {
-		d = r.Inbound(p.Src, p.DstPort)
+		var from netip.Addr
+		if r.NeedsSource(p.DstPort) {
+			from = f.observedAddr(r, p.Src)
+		}
+		d = r.Inbound(p.Src, p.DstPort, from)
 	} else {
-		d = r.InboundICMP(p.Src)
+		var from netip.Addr
+		if r.NeedsSourceICMP() {
+			from = f.observedAddr(r, p.Src)
+		}
+		d = r.InboundICMP(p.Src, from)
 	}
 	if !f.flows.First(keyOf(p)) {
 		return d.Allow
@@ -126,7 +134,22 @@ func (f *filter) peerName(r *policy.Rules, ip netip.Addr) string {
 	return ip.String()
 }
 
-// observed는 그 상대에게서 패킷이 실제로 온 주소를 돌려준다.
+// observedAddr는 그 상대에게서 패킷이 실제로 온 주소를 돌려준다. 포트는 뗀다.
+// IP 대역 규칙이 재는 값이 이것이다. 대역을 보는 규칙이 있는 포트일 때만 부른다.
+func (f *filter) observedAddr(r *policy.Rules, ip netip.Addr) netip.Addr {
+	id, ok := r.PeerOf(ip)
+	if !ok || f.observe == nil {
+		return netip.Addr{}
+	}
+	ap, err := netip.ParseAddrPort(f.observe(id))
+	if err != nil {
+		return netip.Addr{}
+	}
+	return ap.Addr().Unmap()
+}
+
+// observed는 그 상대에게서 패킷이 실제로 온 주소를 기록에 적을 모습으로
+// 돌려준다. 포트를 붙인 채로 적는다.
 func (f *filter) observed(r *policy.Rules, ip netip.Addr) string {
 	id, ok := r.PeerOf(ip)
 	if !ok || f.observe == nil {

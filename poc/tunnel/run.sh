@@ -365,6 +365,76 @@ PYCHECK
     [ "$RL_OK" = 1 ] || exit 1
 
     echo
+    echo "== IP 대역 정책"
+    BD_OK=1
+    # srv-b의 정책을 통째로 다시 쓴다. secret 앱에 대역 조건을 건다.
+    policy_b() { # 허용 대역
+      cat > "$WORK/b/policy.toml" <<TOML
+outbound = ["srv-a/$APP_A"]
+
+[[inbound]]
+app   = "$APP_B"
+allow = ["srv-a"]
+
+[[inbound]]
+app        = "$APP_SECRET"
+allow      = ["srv-a"]
+allow-cidr = ["$1"]
+expires    = "2099-01-01"
+TOML
+      "$CSA" reload -c "$WORK/b" >/dev/null
+    }
+    count_b() { grep -c "$1" "$WORK/b/csa.log" 2>/dev/null || true; }
+    knock() {
+      ip netns exec "$NS_A" timeout 3 bash -c "echo > /dev/tcp/$WG_B/$PORT_SECRET" >/dev/null 2>&1 || true
+      sleep 0.5
+    }
+
+    # srv-a는 10.90.0.10에서 온다. 그 대역을 허용하면 들어온다.
+    policy_b "10.90.0.0/24"
+    before=$(count_b "들어온 연결을 받았습니다.*:$PORT_SECRET")
+    knock
+    if [ "$(count_b "들어온 연결을 받았습니다.*:$PORT_SECRET")" -gt "$before" ]; then
+      printf '  ok    %s\n' "허용 대역에서 오면 들인다"
+    else
+      printf '  틀림  %s\n' "허용 대역에서 왔는데 막는다"; BD_OK=0
+    fi
+
+    # 같은 상대라도 대역이 다르면 막는다. peer-id와 대역을 모두 만족해야 한다.
+    policy_b "192.0.2.0/24"
+    before=$(count_b "들어온 연결을 받았습니다.*:$PORT_SECRET")
+    beforeban=$(count_b "허용 대역 밖에서 왔다")
+    knock
+    if [ "$(count_b "허용 대역 밖에서 왔다")" -gt "$beforeban" ]; then
+      printf '  ok    %s\n' "허용 대역 밖에서 오면 막는다"
+    else
+      printf '  틀림  %s\n' "대역 밖인데 막지 않는다"; BD_OK=0
+    fi
+    if [ "$(count_b "들어온 연결을 받았습니다.*:$PORT_SECRET")" -eq "$before" ]; then
+      printf '  ok    %s\n' "막힌 연결은 앱에게 가지 않는다"
+    else
+      printf '  틀림  %s\n' "막았다면서 앱에게 넘겼다"; BD_OK=0
+    fi
+    if grep -q "허용 대역 밖에서 왔다.*관측한 출발지 $IP_A" "$WORK/b/csa.log"; then
+      printf '  ok    %s\n' "까닭에 관측한 출발지가 남는다"
+    else
+      printf '  틀림  %s\n' "관측한 출발지를 적지 않는다"
+      grep "허용 대역" "$WORK/b/csa.log" | tail -3 | sed 's/^/        /'; BD_OK=0
+    fi
+
+    # 대역을 보는 규칙이 없는 앱은 그대로 지난다.
+    before=$(count_b "들어온 연결을 받았습니다.*:8080")
+    ip netns exec "$NS_A" timeout 3 bash -c "echo > /dev/tcp/$WG_B/8080" >/dev/null 2>&1 || true
+    sleep 0.5
+    if [ "$(count_b "들어온 연결을 받았습니다.*:8080")" -gt "$before" ]; then
+      printf '  ok    %s\n' "대역을 보지 않는 앱은 그대로 지난다"
+    else
+      printf '  틀림  %s\n' "대역과 상관없는 앱까지 막는다"; BD_OK=0
+    fi
+
+    [ "$BD_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
+
+    echo
     echo "== 되돌리기"
     kill "$PID_A" 2>/dev/null || true
     for _ in $(seq 20); do

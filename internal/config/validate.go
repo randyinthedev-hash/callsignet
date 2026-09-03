@@ -152,7 +152,7 @@ func (c *Config) checkPolicy() []string {
 			case in.Expires == "":
 				p = append(p, fmt.Sprintf("allow-cidr에 expires가 없다: app %s", in.App))
 			default:
-				t, err := time.Parse("2006-01-02", in.Expires)
+				t, err := time.ParseInLocation("2006-01-02", in.Expires, time.Local)
 				if err != nil {
 					p = append(p, fmt.Sprintf("expires를 읽을 수 없다: app %s의 %s", in.App, in.Expires))
 				} else if t.Before(time.Now()) {
