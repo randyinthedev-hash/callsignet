@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/randyinthedev-hash/callsignet/internal/config"
+	"github.com/randyinthedev-hash/callsignet/internal/name"
 	"github.com/randyinthedev-hash/callsignet/internal/wgdev"
 )
 
@@ -99,6 +100,16 @@ func runRun(args []string) error {
 		return err
 	}
 	defer dev.Close()
+
+	table, err := name.NewTable(cfg)
+	if err != nil {
+		return err
+	}
+	dnsSrv := name.NewServer(table, cfg.Self.DNS.TTL, logf)
+	if err := dnsSrv.Start(cfg.Self.DNS.Listen); err != nil {
+		return err
+	}
+	defer dnsSrv.Close()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

@@ -4,6 +4,7 @@ go 1.26.3
 
 require (
 	github.com/BurntSushi/toml v1.4.0
+	github.com/miekg/dns v1.1.62
 	github.com/vishvananda/netlink v1.3.1
 	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 )
