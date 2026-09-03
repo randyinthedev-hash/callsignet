@@ -28,6 +28,17 @@ type Tun struct {
 	MTU  int    `toml:"mtu"`
 }
 
+// DefaultTunName은 csa.toml에 tun.name이 없을 때 쓰는 이름이다.
+const DefaultTunName = "cs0"
+
+// TunName은 csa가 만들 인터페이스의 이름이다.
+func (s Self) TunName() string {
+	if s.Tun.Name == "" {
+		return DefaultTunName
+	}
+	return s.Tun.Name
+}
+
 type DNS struct {
 	Listen string `toml:"listen"`
 	TTL    int    `toml:"ttl"`
