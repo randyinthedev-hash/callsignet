@@ -9,7 +9,7 @@ import (
 
 const (
 	keyA = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	keyB = "/////////////////////////////////////////8="
+	keyB = "//////////////////////////////////////////8="
 )
 
 func sample() *config.Config {
@@ -32,7 +32,7 @@ func TestUAPIConfig(t *testing.T) {
 		"private_key=" + strings.Repeat("00", 32),
 		"listen_port=51820",
 		"replace_peers=true",
-		"public_key=" + strings.Repeat("ff", 31) + "ff",
+		"public_key=" + strings.Repeat("ff", 32),
 		"allowed_ip=10.91.0.2/32",
 		"endpoint=10.0.5.2:51820",
 		"persistent_keepalive_interval=25",
