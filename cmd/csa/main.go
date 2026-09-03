@@ -106,8 +106,9 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	self := cfg.Find(cfg.Self.PeerID)
 	dnsSrv := name.NewServer(table, cfg.Self.DNS.TTL, logf)
-	if err := dnsSrv.Start(cfg.Self.DNS.Listen); err != nil {
+	if err := dnsSrv.Start(cfg.Self.DNS.Listen, self.TunnelIP+":53"); err != nil {
 		return err
 	}
 	defer dnsSrv.Close()
@@ -116,8 +117,7 @@ func runRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	self := cfg.Find(cfg.Self.PeerID)
-	took, err := name.Apply(dev.Name, cfg.Self.DNS.Listen, cfg.Self.Domain, revZone, logf)
+	took, err := name.Apply(dev.Name, cfg.Self.DNS.Listen, self.TunnelIP, cfg.Self.Domain, revZone, logf)
 	if err != nil {
 		return err
 	}

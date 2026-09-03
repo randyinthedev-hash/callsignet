@@ -23,7 +23,10 @@ type Takeover struct {
 //
 // 관리 주체를 판별해 거기에 맞춰 건다. systemd-resolved가 관리하면 인터페이스에
 // 도메인을 등록하고, 아무도 관리하지 않으면 /etc/resolv.conf를 직접 고친다.
-func Apply(iface, listenAddr, domain, revZone string, logf func(string, ...any)) (*Takeover, error) {
+// tunnelIP는 systemd-resolved에 등록할 주소다. resolved는 루프백 주소를
+// 받아 주지 않으므로 터널 인터페이스에 붙은 주소를 쓴다. csa는 그 주소에서도
+// 질의를 받는다.
+func Apply(iface, listenAddr, tunnelIP, domain, revZone string, logf func(string, ...any)) (*Takeover, error) {
 	ap, err := netip.ParseAddrPort(listenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("dns.listen을 읽을 수 없다: %s", listenAddr)
@@ -31,14 +34,21 @@ func Apply(iface, listenAddr, domain, revZone string, logf func(string, ...any))
 	listenIP := ap.Addr().String()
 
 	link, _ := os.Readlink(resolvConf)
+	content, _ := os.ReadFile(resolvConf)
 	_, lookErr := exec.LookPath("resolvectl")
-	m := Detect(link, lookErr == nil)
+	m := Detect(link, string(content), lookErr == nil)
 	t := &Takeover{Manager: m, logf: logf}
 
 	switch m {
 	case ManagerResolved:
-		if err := t.applyResolved(iface, listenIP, domain, revZone); err != nil {
-			return nil, err
+		if err := t.applyResolved(iface, tunnelIP, domain, revZone); err != nil {
+			// 걸지 못했으면 파일을 직접 고쳐 본다. 여기서 멈추면 csa가 아예
+			// 뜨지 않으므로, 물러설 자리를 두고 무엇이 막혔는지 적는다.
+			logf("systemd-resolved에 걸지 못했습니다. 파일을 직접 고칩니다: %v", err)
+			t.Manager = ManagerFile
+			if err := t.applyFile(listenIP, domain); err != nil {
+				return nil, err
+			}
 		}
 	case ManagerNetworkManager:
 		// NetworkManager의 전역 DNS 설정은 백엔드에 따라 무시된다. 그래서 파일을
@@ -51,7 +61,7 @@ func Apply(iface, listenAddr, domain, revZone string, logf func(string, ...any))
 			return nil, err
 		}
 	}
-	logf("이름 해석 설정을 걸었습니다. 관리 주체는 %s입니다.", m)
+	logf("이름 해석 설정을 걸었습니다. 관리 주체는 %s입니다.", t.Manager)
 	return t, nil
 }
 
