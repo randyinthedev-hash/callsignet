@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -12,8 +13,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/randyinthedev-hash/callsignet/internal/config"
+	"github.com/randyinthedev-hash/callsignet/internal/control"
 	"github.com/randyinthedev-hash/callsignet/internal/name"
 	"github.com/randyinthedev-hash/callsignet/internal/wgdev"
 )
@@ -43,7 +46,9 @@ func main() {
 		err = runGenkey(args)
 	case "run":
 		err = runRun(args)
-	case "status", "reload":
+	case "status":
+		err = runStatus(args)
+	case "reload":
 		err = fmt.Errorf("아직 만들지 않았습니다: %s", cmd)
 	default:
 		fmt.Fprint(os.Stderr, usage)
@@ -130,11 +135,84 @@ func runRun(args []string) error {
 		logf("이름 해석을 확인했습니다. %s가 %s로 풀립니다.", machine, self.TunnelIP)
 	}
 
+	started := time.Now()
+	ctl, err := control.Listen(cfg.Self.PeerID, func(req string) (string, error) {
+		if req != "status" {
+			return "", fmt.Errorf("모르는 물음이다: %s", req)
+		}
+		return statusJSON(cfg, dev, took, started)
+	})
+	if err != nil {
+		return err
+	}
+	defer ctl.Close()
+	logf("csa status를 받을 소켓을 열었습니다: %s", control.SocketPath(cfg.Self.PeerID))
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	logf("csa가 돕니다. 멈추려면 Ctrl-C를 누르십시오.")
 	<-stop
 	logf("멈춥니다.")
+	return nil
+}
+
+// statusJSON은 지금 상태를 모아 JSON으로 만든다. 설정에서 오는 값과 wg에게
+// 물은 값을 합친다. peers.toml에 있지만 아직 세션을 맺지 않은 상대도 넣는다.
+func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover, started time.Time) (string, error) {
+	self := cfg.Find(cfg.Self.PeerID)
+	st := control.Status{
+		PeerID:   cfg.Self.PeerID,
+		Iface:    dev.Name,
+		TunnelIP: self.TunnelIP,
+		Domain:   cfg.Self.Domain,
+		Resolver: took.Manager.String(),
+		Since:    started,
+	}
+	live := dev.Status()
+	for _, p := range cfg.Peers {
+		if p.PeerID == cfg.Self.PeerID {
+			continue
+		}
+		row := control.PeerStatus{PeerID: p.PeerID, TunnelIP: p.TunnelIP}
+		if w, ok := live[p.PeerID]; ok {
+			row.Endpoint = w.Endpoint
+			row.Handshake = w.Handshake
+			row.RxBytes, row.TxBytes = w.RxBytes, w.TxBytes
+		}
+		st.Peers = append(st.Peers, row)
+	}
+	b, err := json.Marshal(st)
+	if err != nil {
+		return "", fmt.Errorf("상태를 JSON으로 만들지 못했다: %w", err)
+	}
+	return string(b), nil
+}
+
+// runStatus는 도는 csa에게 물어 상태를 찍는다. 설정 디렉터리를 읽는 것은
+// 어느 소켓에 붙을지 알아내려는 것이다. 소켓 이름이 peer-id에서 온다.
+func runStatus(args []string) error {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	dir := fs.String("c", "/etc/callsignet", "설정 디렉터리")
+	asJSON := fs.Bool("json", false, "표 대신 JSON으로 찍는다")
+	fs.Parse(args)
+
+	cfg, err := config.Load(*dir)
+	if err != nil {
+		return err
+	}
+	body, err := control.Ask(cfg.Self.PeerID, "status")
+	if err != nil {
+		return err
+	}
+	if *asJSON {
+		fmt.Println(body)
+		return nil
+	}
+	var st control.Status
+	if err := json.Unmarshal([]byte(body), &st); err != nil {
+		return fmt.Errorf("답을 읽지 못했다: %w", err)
+	}
+	fmt.Print(control.Format(st, time.Now()))
 	return nil
 }
 

@@ -12,9 +12,9 @@ import (
 
 // flowKey는 연결 하나를 가리킨다. 설계에서 말하는 flow가 이것이다.
 type flowKey struct {
-	src, dst   netip.Addr
+	src, dst     netip.Addr
 	sport, dport uint16
-	proto      uint8
+	proto        uint8
 }
 
 func keyOf(p policy.Packet) flowKey {

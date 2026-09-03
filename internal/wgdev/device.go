@@ -125,16 +125,26 @@ func (d *Device) endpointOf(peerID string) string {
 
 // endpointFor는 wg가 내놓은 상태에서 그 공개키의 접속 주소를 찾는다.
 func endpointFor(state, pubHex string) string {
-	var cur string
-	for _, line := range strings.Split(state, "\n") {
-		switch {
-		case strings.HasPrefix(line, "public_key="):
-			cur = strings.TrimPrefix(line, "public_key=")
-		case strings.HasPrefix(line, "endpoint=") && cur == pubHex:
-			return strings.TrimPrefix(line, "endpoint=")
+	return parseStatus(state)[pubHex].Endpoint
+}
+
+// Status는 wg에게 상대들의 상태를 물어 peer-id를 붙여 돌려준다. csa status가 쓴다.
+func (d *Device) Status() map[string]PeerStatus {
+	out := map[string]PeerStatus{}
+	if d.dev == nil {
+		return out
+	}
+	state, err := d.dev.IpcGet()
+	if err != nil {
+		return out
+	}
+	byKey := parseStatus(state)
+	for peerID, pub := range d.pubOf {
+		if p, ok := byKey[pub]; ok {
+			out[peerID] = p
 		}
 	}
-	return ""
+	return out
 }
 
 // Close는 wg를 멈추고 TUN 인터페이스를 닫는다.

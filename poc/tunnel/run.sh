@@ -259,6 +259,56 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
     echo "확인됨. 받는 쪽이 최종 판단을 한다."
 
     echo
+    echo "== 상태"
+    ST_OK=1
+    "$CSA" status -c "$WORK/a" 2>&1 | sed 's/^/    /'
+    SJ=$("$CSA" status -c "$WORK/a" -json 2>/dev/null || true)
+    if ! python3 - "$SJ" "$IP_B" <<'PYCHECK'
+import json, sys
+
+st = json.loads(sys.argv[1])
+peers = {p["peer-id"]: p for p in st["peers"]}
+ok = True
+
+
+def check(cond, good, bad):
+    global ok
+    if cond:
+        print("  ok    " + good)
+    else:
+        print("  틀림  " + bad)
+        ok = False
+
+
+check(sorted(peers) == ["srv-b", "srv-c"],
+      "peers.toml의 상대를 모두 보여 준다",
+      "상대 목록이 다르다: %s" % sorted(peers))
+
+b = peers.get("srv-b", {})
+check(b.get("handshake", "").startswith("20"),
+      "세션을 맺은 상대의 handshake 시각을 보여 준다",
+      "handshake 시각이 없다: %s" % b.get("handshake"))
+check(b.get("endpoint", "").startswith(sys.argv[2] + ":"),
+      "관측한 출발지를 보여 준다",
+      "출발지가 다르다: %s" % b.get("endpoint"))
+check(b.get("rx-bytes", 0) > 0 and b.get("tx-bytes", 0) > 0,
+      "주고받은 바이트를 보여 준다",
+      "바이트 수가 0이다. 받음 %s, 보냄 %s" % (b.get("rx-bytes"), b.get("tx-bytes")))
+
+c = peers.get("srv-c", {})
+check(c.get("handshake", "").startswith("0001"),
+      "세션을 맺지 않은 상대는 시각이 비어 있다",
+      "시각이 있다: %s" % c.get("handshake"))
+check(not c.get("endpoint"),
+      "세션을 맺지 않은 상대는 출발지가 비어 있다",
+      "관측하지 않은 주소를 보여 준다: %s" % c.get("endpoint"))
+
+sys.exit(0 if ok else 1)
+PYCHECK
+    then ST_OK=0; fi
+    [ "$ST_OK" = 1 ] || { echo "$SJ"; exit 1; }
+
+    echo
     echo "== 되돌리기"
     kill "$PID_A" 2>/dev/null || true
     for _ in $(seq 20); do
@@ -271,6 +321,11 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
     else
       echo "  틀림  되돌리지 않았다"
       cat "/etc/netns/$NS_A/resolv.conf"; exit 1
+    fi
+    if "$CSA" status -c "$WORK/a" >/dev/null 2>&1; then
+      echo "  틀림  멈춘 csa에 붙었다고 한다"; exit 1
+    else
+      echo "  ok    멈춘 뒤에는 csa status가 붙지 못한다고 알린다"
     fi
   else
     echo "이름으로는 통하지 않습니다."; exit 1
