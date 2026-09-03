@@ -57,9 +57,14 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 		return nil, err
 	}
 
+	// CSA_DEBUG를 켜면 wg가 handshake와 세션을 어떻게 다루는지 모두 적는다.
+	verbose := func(f string, a ...any) {}
+	if os.Getenv("CSA_DEBUG") != "" {
+		verbose = func(f string, a ...any) { logf("wg: "+f, a...) }
+	}
 	d := device.NewDevice(t, conn.NewDefaultBind(), &device.Logger{
-		Verbosef: func(f string, a ...any) {},
-		Errorf:   func(f string, a ...any) { logf("wg: "+f, a...) },
+		Verbosef: verbose,
+		Errorf:   func(f string, a ...any) { logf("wg 오류: "+f, a...) },
 	})
 	if err := d.IpcSet(uapi); err != nil {
 		d.Close()
