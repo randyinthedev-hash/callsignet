@@ -67,3 +67,19 @@ func TestUAPIConfigRejectsBadKey(t *testing.T) {
 		t.Fatal("길이가 모자란 개인키를 받아들였다")
 	}
 }
+
+func TestEndpointFor(t *testing.T) {
+	state := "private_key=00\n" +
+		"public_key=aa\nendpoint=10.0.5.2:51820\nlast_handshake_time_sec=1\n" +
+		"public_key=bb\nendpoint=10.0.5.3:51820\n"
+	if got := endpointFor(state, "bb"); got != "10.0.5.3:51820" {
+		t.Fatalf("10.0.5.3:51820이어야 하는데 %q", got)
+	}
+	if got := endpointFor(state, "cc"); got != "" {
+		t.Fatalf("모르는 키에는 빈 값이어야 하는데 %q", got)
+	}
+	// 접속 주소가 아직 없는 상대다.
+	if got := endpointFor("public_key=dd\n", "dd"); got != "" {
+		t.Fatalf("빈 값이어야 하는데 %q", got)
+	}
+}
