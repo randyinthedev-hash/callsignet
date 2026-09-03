@@ -5,6 +5,7 @@ package wgdev
 import (
 	"fmt"
 	"net/netip"
+	"sync/atomic"
 
 	"github.com/randyinthedev-hash/callsignet/internal/policy"
 	"golang.zx2c4.com/wireguard/tun"
@@ -17,7 +18,9 @@ import (
 // 받는 쪽 집행이다.
 type filter struct {
 	tun.Device
-	rules *policy.Rules
+	// rules는 csa reload가 통째로 갈아 끼운다. 패킷을 보는 쪽은 포인터 하나를
+	// 읽으므로 반쯤 바뀐 규칙을 보지 않는다.
+	rules atomic.Pointer[policy.Rules]
 	logf  func(string, ...any)
 	flows *flows
 	// observe는 그 상대의 지금 접속 주소를 돌려준다. wg가 복호화하면서 짝을
@@ -72,17 +75,18 @@ func (f *filter) allowOut(pkt []byte) (policy.Decision, bool) {
 		// 같은 것이 여기 걸리므로 기록하지 않는다.
 		return policy.Decision{}, false
 	}
+	r := f.rules.Load()
 	var d policy.Decision
 	if p.HasPorts() {
-		d = f.rules.Outbound(p.Dst, p.DstPort)
+		d = r.Outbound(p.Dst, p.DstPort)
 	} else {
-		d = f.rules.OutboundICMP(p.Dst)
+		d = r.OutboundICMP(p.Dst)
 	}
 	if !f.flows.First(keyOf(p)) {
 		return d, d.Allow
 	}
 	if d.Allow {
-		f.logf("나가는 연결을 엽니다. 상대 %s, 목적지 %s", f.peerName(p.Dst), portName(p))
+		f.logf("나가는 연결을 엽니다. 상대 %s, 목적지 %s", f.peerName(r, p.Dst), portName(p))
 	} else {
 		f.logf("나가는 연결을 막았습니다. 목적지 %s, 까닭 %s", p.Dst, d.Reason)
 	}
@@ -94,36 +98,37 @@ func (f *filter) allowIn(pkt []byte) bool {
 	if !ok {
 		return false
 	}
+	r := f.rules.Load()
 	var d policy.Decision
 	if p.HasPorts() {
-		d = f.rules.Inbound(p.Src, p.DstPort)
+		d = r.Inbound(p.Src, p.DstPort)
 	} else {
-		d = f.rules.InboundICMP(p.Src)
+		d = r.InboundICMP(p.Src)
 	}
 	if !f.flows.First(keyOf(p)) {
 		return d.Allow
 	}
-	id := f.peerName(p.Src)
+	id := f.peerName(r, p.Src)
 	if !d.Allow {
 		f.logf("들어온 연결을 막았습니다. 상대 %s, 출발지 %s, 까닭 %s", id, p.Src, d.Reason)
 		return false
 	}
 	f.logf("들어온 연결을 받았습니다. 상대 %s, 관측한 출발지 %s, 목적지 %s",
-		id, f.observed(p.Src), portName(p))
+		id, f.observed(r, p.Src), portName(p))
 	return true
 }
 
 // peerName은 터널 IP에 이름을 붙인다. 모르는 주소면 주소를 그대로 쓴다.
-func (f *filter) peerName(ip netip.Addr) string {
-	if id, ok := f.rules.PeerOf(ip); ok {
+func (f *filter) peerName(r *policy.Rules, ip netip.Addr) string {
+	if id, ok := r.PeerOf(ip); ok {
 		return id
 	}
 	return ip.String()
 }
 
 // observed는 그 상대에게서 패킷이 실제로 온 주소를 돌려준다.
-func (f *filter) observed(ip netip.Addr) string {
-	id, ok := f.rules.PeerOf(ip)
+func (f *filter) observed(r *policy.Rules, ip netip.Addr) string {
+	id, ok := r.PeerOf(ip)
 	if !ok || f.observe == nil {
 		return "알 수 없음"
 	}
@@ -143,7 +148,7 @@ func portName(p policy.Packet) string {
 // reject는 앱에게 거절을 알린다. 감싼 인터페이스에 바로 쓰므로 다시 걸러지지
 // 않는다.
 func (f *filter) reject(pkt []byte, d policy.Decision) {
-	icmp := policy.RejectICMP(pkt, f.rules.SelfIP())
+	icmp := policy.RejectICMP(pkt, f.rules.Load().SelfIP())
 	if icmp == nil {
 		return
 	}

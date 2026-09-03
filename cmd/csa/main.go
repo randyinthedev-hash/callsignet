@@ -12,6 +12,8 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -49,7 +51,7 @@ func main() {
 	case "status":
 		err = runStatus(args)
 	case "reload":
-		err = fmt.Errorf("아직 만들지 않았습니다: %s", cmd)
+		err = runReload(args)
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
@@ -135,12 +137,19 @@ func runRun(args []string) error {
 		logf("이름 해석을 확인했습니다. %s가 %s로 풀립니다.", machine, self.TunnelIP)
 	}
 
+	// live는 csa가 지금 따르고 있는 설정이다. csa reload가 갈아 끼운다.
+	var live atomic.Pointer[config.Config]
+	live.Store(cfg)
+
 	started := time.Now()
 	ctl, err := control.Listen(cfg.Self.PeerID, func(req string) (string, error) {
-		if req != "status" {
-			return "", fmt.Errorf("모르는 물음이다: %s", req)
+		switch req {
+		case "status":
+			return statusJSON(live.Load(), dev, took, started)
+		case "reload":
+			return reload(*dir, &live, dev, dnsSrv, logf)
 		}
-		return statusJSON(cfg, dev, took, started)
+		return "", fmt.Errorf("모르는 물음이다: %s", req)
 	})
 	if err != nil {
 		return err
@@ -191,6 +200,91 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover, star
 		return "", fmt.Errorf("상태를 JSON으로 만들지 못했다: %w", err)
 	}
 	return string(b), nil
+}
+
+// reload는 설정을 다시 읽어 걸 수 있는 것만 건다.
+//
+// peers.toml과 policy.toml은 도는 중에 갈아 끼울 수 있다. csa.toml은 그럴 수
+// 없다. 거기 적힌 값은 TUN 인터페이스와 개인키와 리슨 주소를 정하므로 바꾸려면
+// csa를 다시 띄워야 한다. csa.toml이 바뀌었으면 csa는 아무것도 걸지 않고 그
+// 사실을 알린다. 반쯤 걸면 운영자가 무엇이 도는지 알 수 없다.
+//
+// 검사에 걸린 설정도 걸지 않는다. csa는 앞서 읽은 설정 그대로 계속 돈다.
+func reload(dir string, live *atomic.Pointer[config.Config], dev *wgdev.Device,
+	dnsSrv *name.Server, logf func(string, ...any)) (string, error) {
+
+	cur, err := config.Load(dir)
+	if err != nil {
+		return "", fmt.Errorf("%w. 아무것도 바꾸지 않았다", err)
+	}
+	if problems := cur.Validate(); len(problems) > 0 {
+		return "", fmt.Errorf("설정에 어긋난 곳이 %d군데 있다. 아무것도 바꾸지 않았다:\n  %s",
+			len(problems), strings.Join(problems, "\n  "))
+	}
+	ch := config.Diff(live.Load(), cur)
+	if ch.SelfChanged {
+		return "", fmt.Errorf("csa.toml이 바뀌었다. 이 값은 도는 중에 바꿀 수 없다. " +
+			"아무것도 바꾸지 않았다. csa를 다시 띄우라")
+	}
+	if ch.SelfPeerChanged {
+		return "", fmt.Errorf("peers.toml에서 이 머신 자신의 공개키나 터널 IP가 바뀌었다. " +
+			"이 값은 도는 중에 바꿀 수 없다. 아무것도 바꾸지 않았다. csa를 다시 띄우라")
+	}
+	if !ch.Any() {
+		return "바뀐 것이 없습니다.\n", nil
+	}
+
+	table, err := name.NewTable(cur)
+	if err != nil {
+		return "", fmt.Errorf("%w. 아무것도 바꾸지 않았다", err)
+	}
+	if err := dev.Reload(cur); err != nil {
+		return "", err
+	}
+	dnsSrv.SetTable(table)
+	live.Store(cur)
+
+	report := reloadReport(ch)
+	logf("설정을 다시 읽었습니다. %s", strings.ReplaceAll(strings.TrimSpace(report), "\n", " "))
+	return report, nil
+}
+
+func reloadReport(c config.Changes) string {
+	var b strings.Builder
+	b.WriteString("설정을 다시 읽었습니다.\n")
+	if len(c.AddedPeers) > 0 {
+		fmt.Fprintf(&b, "  더한 상대: %s\n", strings.Join(c.AddedPeers, ", "))
+	}
+	if len(c.RemovedPeers) > 0 {
+		fmt.Fprintf(&b, "  뺀 상대: %s\n", strings.Join(c.RemovedPeers, ", "))
+	}
+	if len(c.ChangedPeers) > 0 {
+		fmt.Fprintf(&b, "  고친 상대: %s\n", strings.Join(c.ChangedPeers, ", "))
+	}
+	if c.PolicyChanged {
+		b.WriteString("  정책을 바꾸었습니다.\n")
+	}
+	return b.String()
+}
+
+// runReload는 도는 csa에게 설정을 다시 읽으라고 이른다. 다시 읽는 것은 도는
+// csa가 자기가 기동할 때 받은 디렉터리에서 한다. 여기서 주는 -c는 어느 소켓에
+// 붙을지 알아내는 데만 쓴다.
+func runReload(args []string) error {
+	fs := flag.NewFlagSet("reload", flag.ExitOnError)
+	dir := fs.String("c", "/etc/callsignet", "설정 디렉터리")
+	fs.Parse(args)
+
+	cfg, err := config.Load(*dir)
+	if err != nil {
+		return err
+	}
+	out, err := control.Ask(cfg.Self.PeerID, "reload")
+	if err != nil {
+		return err
+	}
+	fmt.Print(out)
+	return nil
 }
 
 // runStatus는 도는 csa에게 물어 상태를 찍는다. 설정 디렉터리를 읽는 것은
