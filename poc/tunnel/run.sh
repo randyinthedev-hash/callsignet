@@ -49,12 +49,13 @@ attach() { # ns addr
 attach "$NS_A" "$IP_A"
 attach "$NS_B" "$IP_B"
 
-# csa가 리졸버 자리를 차지하는 부분은 아직 만들지 않았다. 하네스가 대신 잡아 준다.
+# 상위 리졸버만 적어 둔다. csa가 이 파일을 가져가 자기를 첫 줄에 넣어야 한다.
 # ip netns exec는 /etc/netns/<이름>/resolv.conf가 있으면 그것을 /etc/resolv.conf
-# 자리에 붙여 준다.
+# 자리에 붙여 준다. 심볼릭 링크가 아니므로 csa는 파일 갈래로 판별한다.
+UPSTREAM=10.90.0.253
 for ns in "$NS_A" "$NS_B"; do
   mkdir -p "/etc/netns/$ns"
-  echo "nameserver 127.0.0.54" > "/etc/netns/$ns/resolv.conf"
+  echo "nameserver $UPSTREAM" > "/etc/netns/$ns/resolv.conf"
 done
 
 # 언더레이가 먼저 통해야 한다. 여기서 막히면 터널 문제가 아니다.
@@ -166,6 +167,26 @@ for i in $(seq 20); do
 done
 if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; then
   echo
+  echo "== 리졸버 자리 차지하기"
+  TAKE_OK=1
+  if grep -q "^nameserver 127.0.0.54" "/etc/netns/$NS_A/resolv.conf"; then
+    printf '  ok    %s\n' "csa가 자기를 첫 줄에 넣었다"
+  else
+    printf '  틀림  %s\n' "csa가 파일을 가져가지 않았다"; TAKE_OK=0
+  fi
+  if grep -q "^nameserver $UPSTREAM" "/etc/netns/$NS_A/resolv.conf"; then
+    printf '  ok    %s\n' "원래 리졸버를 남겼다"
+  else
+    printf '  틀림  %s\n' "원래 리졸버를 잃었다"; TAKE_OK=0
+  fi
+  if grep -q "이름 해석을 확인했습니다" "$WORK/a/csa.log"; then
+    printf '  ok    %s\n' "csa가 스스로 확인했다"
+  else
+    printf '  틀림  %s\n' "csa가 확인하지 못했다"; TAKE_OK=0
+  fi
+  [ "$TAKE_OK" = 1 ] || { grep -i "이름 해석" "$WORK/a/csa.log" || true; exit 1; }
+
+  echo
   echo "== 이름 해석"
   NAME_OK=1
   check_dig() { # 질의 기대값 설명
@@ -236,6 +257,21 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
                            echo "--- b의 로그 ---"; grep 막았습니다 "$WORK/b/csa.log" || true; exit 1; }
     echo
     echo "확인됨. 받는 쪽이 최종 판단을 한다."
+
+    echo
+    echo "== 되돌리기"
+    kill "$PID_A" 2>/dev/null || true
+    for _ in $(seq 20); do
+      grep -q "되돌렸습니다" "$WORK/a/csa.log" && break
+      sleep 0.2
+    done
+    if grep -q "^nameserver $UPSTREAM" "/etc/netns/$NS_A/resolv.conf" &&
+       ! grep -q "^nameserver 127.0.0.54" "/etc/netns/$NS_A/resolv.conf"; then
+      echo "  ok    csa가 멈추면서 원래 파일로 되돌렸다"
+    else
+      echo "  틀림  되돌리지 않았다"
+      cat "/etc/netns/$NS_A/resolv.conf"; exit 1
+    fi
   else
     echo "이름으로는 통하지 않습니다."; exit 1
   fi
