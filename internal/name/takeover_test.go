@@ -1,6 +1,8 @@
 package name
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -73,5 +75,38 @@ func TestResolvedArgs(t *testing.T) {
 	}
 	if !strings.Contains(joined, "~cs.example.internal") {
 		t.Fatalf("내부 도메인이 없다: %s", joined)
+	}
+}
+
+func TestResolvTargetFollowsLink(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real.conf")
+	if err := os.WriteFile(real, []byte("nameserver 10.0.0.53\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 심볼릭 링크가 아니면 그 경로를 그대로 쓴다.
+	if got, _ := resolvTarget(real); got != real {
+		t.Fatalf("%s여야 하는데 %s", real, got)
+	}
+
+	// 절대 경로를 가리키는 링크.
+	abs := filepath.Join(dir, "abs.conf")
+	if err := os.Symlink(real, abs); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := resolvTarget(abs); got != real {
+		t.Fatalf("링크를 따라가야 하는데 %s", got)
+	}
+
+	// 상대 경로를 가리키는 링크. /etc/resolv.conf가 이 모양이다.
+	sub := filepath.Join(dir, "sub")
+	os.Mkdir(sub, 0o755)
+	rel := filepath.Join(sub, "rel.conf")
+	if err := os.Symlink("../real.conf", rel); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := resolvTarget(rel); got != real {
+		t.Fatalf("상대 경로 링크를 따라가야 하는데 %s", got)
 	}
 }
