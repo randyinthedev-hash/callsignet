@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"os/signal"
 	"syscall"
@@ -110,6 +111,24 @@ func runRun(args []string) error {
 		return err
 	}
 	defer dnsSrv.Close()
+
+	revZone, err := name.ReverseZone(netip.MustParsePrefix(cfg.Self.TunnelCIDR))
+	if err != nil {
+		return err
+	}
+	self := cfg.Find(cfg.Self.PeerID)
+	took, err := name.Apply(dev.Name, cfg.Self.DNS.Listen, cfg.Self.Domain, revZone, logf)
+	if err != nil {
+		return err
+	}
+	defer took.Close()
+
+	machine := cfg.Self.PeerID + "." + cfg.Self.Domain
+	if err := name.Verify(machine, netip.MustParseAddr(self.TunnelIP)); err != nil {
+		logf("이름 해석 설정이 먹지 않았습니다: %v", err)
+	} else {
+		logf("이름 해석을 확인했습니다. %s가 %s로 풀립니다.", machine, self.TunnelIP)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
