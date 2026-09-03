@@ -1,0 +1,15 @@
+# 실험 중 생성되는 키·상태 (절대 커밋하지 않는다)
+poc/cryptokey/_work/
+*.key
+*.privkey
+
+# 실행 산출물
+*.pcap
+*.log
+
+# 편집기·OS
+.DS_Store
+*.swp
+
+# 첨삭 작업 폴더
+_workspace/
