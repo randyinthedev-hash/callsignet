@@ -71,10 +71,7 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 	if mtu == 0 {
 		mtu = 1420
 	}
-	name := c.Self.Tun.Name
-	if name == "" {
-		name = "cs0"
-	}
+	name := c.Self.TunName()
 
 	rules, err := policy.New(c)
 	if err != nil {

@@ -51,7 +51,7 @@ func (c *Config) checkSelf() []string {
 		return p
 	}
 	// 이 머신이 이미 쓰는 대역과 겹치면 원래 가던 트래픽이 터널로 들어간다.
-	for _, local := range localPrefixes() {
+	for _, local := range localPrefixes(s.TunName()) {
 		if cidr.Overlaps(local) {
 			p = append(p, fmt.Sprintf("tunnel-cidr가 이 머신이 이미 쓰는 대역과 겹친다: %s, %s", cidr, local))
 		}
@@ -189,28 +189,42 @@ func hasApp(svcs []Service, app string) bool {
 	return false
 }
 
-// localPrefixes는 이 머신의 인터페이스에 붙은 대역을 돌려준다.
-func localPrefixes() []netip.Prefix {
+// localPrefixes는 이 머신의 인터페이스에 붙은 대역을 모은다. skip이라는 이름의
+// 인터페이스는 뺀다.
+//
+// csa가 만든 인터페이스를 빼는 까닭이 있다. 도는 중에 이 검사를 하면 csa가
+// 스스로 붙여 둔 터널 IP가 잡혀, 자기 대역과 겹친다고 말하게 된다. csa reload가
+// 그런 자리이고, 운영자가 도는 머신에서 csa check를 할 때도 그렇다.
+func localPrefixes(skip string) []netip.Prefix {
 	var out []netip.Prefix
-	addrs, err := net.InterfaceAddrs()
+	ifaces, err := net.Interfaces()
 	if err != nil {
 		return out
 	}
-	for _, a := range addrs {
-		n, ok := a.(*net.IPNet)
-		if !ok {
+	for _, iface := range ifaces {
+		if iface.Name == skip {
 			continue
 		}
-		ip, ok := netip.AddrFromSlice(n.IP)
-		if !ok {
+		addrs, err := iface.Addrs()
+		if err != nil {
 			continue
 		}
-		ones, _ := n.Mask.Size()
-		pfx, err := ip.Unmap().Prefix(ones)
-		if err != nil || pfx.Addr().IsLoopback() {
-			continue
+		for _, a := range addrs {
+			n, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			ip, ok := netip.AddrFromSlice(n.IP)
+			if !ok {
+				continue
+			}
+			ones, _ := n.Mask.Size()
+			pfx, err := ip.Unmap().Prefix(ones)
+			if err != nil || pfx.Addr().IsLoopback() {
+				continue
+			}
+			out = append(out, pfx)
 		}
-		out = append(out, pfx)
 	}
 	return out
 }
