@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -88,45 +89,39 @@ func (t *Takeover) applyResolved(iface, listenIP, domain, revZone string) error 
 }
 
 func (t *Takeover) applyFile(listenIP, domain string) error {
-	old, err := os.ReadFile(resolvConf)
+	path, err := resolvTarget(resolvConf)
 	if err != nil {
-		return fmt.Errorf("%s를 읽지 못했다: %w", resolvConf, err)
-	}
-	link, _ := os.Readlink(resolvConf)
-
-	if err := writeResolvConf(ResolvConf(string(old), listenIP, domain)); err != nil {
 		return err
 	}
-	t.restore = func() error {
-		if link != "" {
-			// 원래 심볼릭 링크였다면 그대로 되돌린다.
-			if err := os.Remove(resolvConf); err != nil {
-				return err
-			}
-			return os.Symlink(link, resolvConf)
-		}
-		return writeResolvConf(string(old))
+	if path != resolvConf {
+		t.logf("%s는 %s를 가리킵니다. 그 파일에 씁니다. 관리하는 것이 있으면 되돌릴 수 있습니다.",
+			resolvConf, path)
 	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("%s를 읽지 못했다: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(ResolvConf(string(old), listenIP, domain)), 0o644); err != nil {
+		return fmt.Errorf("%s를 쓰지 못했다: %w", path, err)
+	}
+	t.restore = func() error { return os.WriteFile(path, old, 0o644) }
 	return nil
 }
 
-// writeResolvConf는 파일을 통째로 바꾼다.
+// resolvTarget은 실제로 쓸 파일의 경로를 돌려준다.
 //
-// 먼저 임시 파일을 만들어 이름을 바꾸는 방식을 쓴다. 읽는 쪽이 반쯤 쓰인 파일을
-// 보지 않게 하려는 것이다. 그런데 그 파일이 bind mount로 붙어 있으면 이름을
-// 바꿀 수 없다. 네트워크 네임스페이스 안이 그렇다. 그때는 제자리에 쓴다.
-func writeResolvConf(content string) error {
-	tmp := resolvConf + ".callsignet"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err == nil {
-		if err := os.Rename(tmp, resolvConf); err == nil {
-			return nil
-		}
-		os.Remove(tmp)
+// 심볼릭 링크면 그것이 가리키는 파일을 돌려준다. 링크 자체를 갈아치우면
+// 시스템의 다른 설정을 망가뜨린다. 네트워크 네임스페이스는 링크가 가리키는
+// 자리에 다른 파일을 붙여 두므로, 링크를 갈아치우면 그 파일에 닿지도 못한다.
+func resolvTarget(path string) (string, error) {
+	link, err := os.Readlink(path)
+	if err != nil {
+		return path, nil // 심볼릭 링크가 아니다
 	}
-	if err := os.WriteFile(resolvConf, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("%s를 쓰지 못했다: %w", resolvConf, err)
+	if filepath.IsAbs(link) {
+		return link, nil
 	}
-	return nil
+	return filepath.Clean(filepath.Join(filepath.Dir(path), link)), nil
 }
 
 // Verify는 설정이 실제로 먹었는지 스스로 확인한다. 자기 머신 이름을 시스템
