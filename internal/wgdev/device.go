@@ -48,15 +48,22 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 		name = "cs0"
 	}
 
-	t, err := tun.CreateTUN(name, mtu)
+	rules, err := policy.New(c)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, err := tun.CreateTUN(name, mtu)
 	if err != nil {
 		return nil, fmt.Errorf("TUN 인터페이스를 만들지 못했다: %w", err)
 	}
-	real, err := t.Name()
+	real, err := raw.Name()
 	if err != nil {
-		t.Close()
+		raw.Close()
 		return nil, err
 	}
+	// 감싸서 정책을 집행한다. wg가 읽는 자리가 나가는 쪽이고 쓰는 자리가 받는 쪽이다.
+	t := &filter{Device: raw, rules: rules, logf: logf}
 
 	// CSA_DEBUG를 켜면 wg가 handshake와 세션을 어떻게 다루는지 모두 적는다.
 	verbose := func(f string, a ...any) {}
