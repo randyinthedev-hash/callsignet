@@ -71,6 +71,10 @@ echo "== 키와 설정"
 PUB_A=$("$CSA" genkey -o "$WORK/a/private.key" | sed -n 's/^공개키: //p')
 PUB_B=$("$CSA" genkey -o "$WORK/b/private.key" | sed -n 's/^공개키: //p')
 
+# 두 머신에 서로 다른 앱을 둔다. 이름 해석이 앱마다 다른 답을 내는지 보려는 것이다.
+APP_A=billing
+APP_B=report
+
 peers_toml() {
   cat <<TOML
 [[peer]]
@@ -78,17 +82,17 @@ peer-id    = "srv-a"
 public-key = "$PUB_A"
 tunnel-ip  = "$WG_A"
 endpoints  = ["$IP_A:$PORT"]
-services   = [{ app = "test", port = 9 }]
+services   = [{ app = "$APP_A", port = 8080 }]
 
 [[peer]]
 peer-id    = "srv-b"
 public-key = "$PUB_B"
 tunnel-ip  = "$WG_B"
 endpoints  = ["$IP_B:$PORT"]
-services   = [{ app = "test", port = 9 }]
+services   = [{ app = "$APP_B", port = 8080 }]
 TOML
 }
-side() { # dir peer-id 상대
+side() { # dir peer-id 상대 내앱 상대앱
   peers_toml > "$WORK/$1/peers.toml"
   cat > "$WORK/$1/csa.toml" <<TOML
 peer-id     = "$2"
@@ -105,15 +109,15 @@ mtu  = 1420
 listen = "127.0.0.54:53"
 TOML
   cat > "$WORK/$1/policy.toml" <<TOML
-outbound = ["$3/test"]
+outbound = ["$3/$5"]
 
 [[inbound]]
-app   = "test"
+app   = "$4"
 allow = ["$3"]
 TOML
 }
-side a srv-a srv-b
-side b srv-b srv-a
+side a srv-a srv-b "$APP_A" "$APP_B"
+side b srv-b srv-a "$APP_B" "$APP_A"
 
 echo "== 설정 검사"
 "$CSA" check -c "$WORK/a"
@@ -157,9 +161,15 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
       printf '  틀림  %-46s -> %s (기대 %s)\n' "$3" "${got:-없음}" "$2"; NAME_OK=0
     fi
   }
-  check_dig "report.srv-b.cs.test.internal A" "$WG_B"                    "서비스 이름"
+  check_dig "$APP_B.srv-b.cs.test.internal A" "$WG_B"                    "서비스 이름"
   check_dig "srv-b.cs.test.internal A"        "$WG_B"                    "머신 이름"
   check_dig "-x $WG_B"                        "srv-b.cs.test.internal."  "역방향"
+
+  check_dig "$APP_A.srv-a.cs.test.internal A" "$WG_A"                    "자기 서비스 이름"
+
+  rc=$(ip netns exec "$NS_A" dig @127.0.0.54 +time=2 +tries=1 "$APP_A.srv-b.cs.test.internal" A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
+  if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "다른 머신의 앱 이름"
+  else printf '  틀림  %-46s -> %s\n' "다른 머신의 앱 이름" "${rc:-없음}"; NAME_OK=0; fi
 
   rc=$(ip netns exec "$NS_A" dig @127.0.0.54 +time=2 +tries=1 srv-z.cs.test.internal A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
   if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "설정에 없는 이름"
@@ -171,7 +181,7 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
 
   echo
   echo "== 이름으로 ping"
-  if ip netns exec "$NS_A" ping -c 2 -W 2 report.srv-b.cs.test.internal; then
+  if ip netns exec "$NS_A" ping -c 2 -W 2 "$APP_B.srv-b.cs.test.internal"; then
     echo
     echo "확인됨. 앱이 이름으로 부르고 csa 둘이 터널로 나른다."
     [ "$NAME_OK" = 1 ] || { echo "다만 이름 해석에 틀린 것이 있습니다."; exit 1; }
