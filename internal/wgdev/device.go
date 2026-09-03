@@ -11,7 +11,6 @@ import (
 	"github.com/randyinthedev-hash/callsignet/internal/config"
 	"github.com/randyinthedev-hash/callsignet/internal/policy"
 	"github.com/vishvananda/netlink"
-	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	"golang.zx2c4.com/wireguard/tun"
 )
