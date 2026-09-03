@@ -25,7 +25,7 @@ make test      # 시험을 돌린다
 | `csa genkey -o <파일>` | 정적 키쌍을 만든다 |
 | `csa run -c <디렉터리>` | TUN 인터페이스를 만들고 돈다 |
 
-설정 파일 셋을 어떻게 적는지는 [design/README.md](design/README.md)의 설정 절에 있다.
+설정 파일 셋을 어떻게 적는지는 [design/README.md](design/README.md)의 설정 절에 있다. 무엇을 어떻게 확인하는지는 [TESTING.md](TESTING.md)에 있다.
 
 ## 실험
 
