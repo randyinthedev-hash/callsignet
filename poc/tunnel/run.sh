@@ -48,6 +48,16 @@ attach() { # ns addr
 attach "$NS_A" "$IP_A"
 attach "$NS_B" "$IP_B"
 
+# 언더레이가 먼저 통해야 한다. 여기서 막히면 터널 문제가 아니다.
+if ! ip netns exec "$NS_A" ping -c 2 -W 2 "$IP_B" >/dev/null 2>&1; then
+  echo "언더레이가 통하지 않습니다. 터널 이전의 문제입니다." >&2
+  echo "브리지로 오가는 패킷이 방화벽에 막히는지 보십시오:" >&2
+  echo "  sysctl net.bridge.bridge-nf-call-iptables" >&2
+  echo "  iptables -L FORWARD -n | head -3" >&2
+  exit 1
+fi
+echo "언더레이 확인"
+
 echo "== 키와 설정"
 PUB_A=$("$CSA" genkey -o "$WORK/a/private.key" | sed -n 's/^공개키: //p')
 PUB_B=$("$CSA" genkey -o "$WORK/b/private.key" | sed -n 's/^공개키: //p')
@@ -101,8 +111,9 @@ echo "== 설정 검사"
 "$CSA" check -c "$WORK/b"
 
 echo "== csa 기동"
-ip netns exec "$NS_A" "$CSA" run -c "$WORK/a" > "$WORK/a/csa.log" 2>&1 & PID_A=$!
-ip netns exec "$NS_B" "$CSA" run -c "$WORK/b" > "$WORK/b/csa.log" 2>&1 & PID_B=$!
+export CSA_DEBUG="${CSA_DEBUG:-1}"
+ip netns exec "$NS_A" env CSA_DEBUG="$CSA_DEBUG" "$CSA" run -c "$WORK/a" > "$WORK/a/csa.log" 2>&1 & PID_A=$!
+ip netns exec "$NS_B" env CSA_DEBUG="$CSA_DEBUG" "$CSA" run -c "$WORK/b" > "$WORK/b/csa.log" 2>&1 & PID_B=$!
 for _ in $(seq 30); do
   if ip netns exec "$NS_A" ip link show cs0 >/dev/null 2>&1 &&
      ip netns exec "$NS_B" ip link show cs0 >/dev/null 2>&1; then break; fi
@@ -120,8 +131,10 @@ if ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; then
   echo "확인됨. csa 둘이 터널을 세우고 터널 IP로 통신한다."
 else
   echo
-  echo "실패했습니다. 로그를 보십시오."
-  echo "--- a ---"; cat "$WORK/a/csa.log"
-  echo "--- b ---"; cat "$WORK/b/csa.log"
+  echo "실패했습니다."
+  echo "--- a의 경로 ---"; ip netns exec "$NS_A" ip -4 route
+  echo "--- b의 경로 ---"; ip netns exec "$NS_B" ip -4 route
+  echo "--- a의 로그 ---"; tail -30 "$WORK/a/csa.log"
+  echo "--- b의 로그 ---"; tail -30 "$WORK/b/csa.log"
   exit 1
 fi
