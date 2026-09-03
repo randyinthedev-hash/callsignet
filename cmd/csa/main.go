@@ -1,0 +1,113 @@
+// csa는 머신마다 하나 도는 Callsignet agent다.
+package main
+
+import (
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
+	"flag"
+	"fmt"
+	"os"
+
+	"github.com/randyinthedev-hash/callsignet/internal/config"
+)
+
+const usage = `csa — Callsignet agent
+
+사용법: csa <명령> [옵션]
+
+  check    설정을 읽고 검사한다
+  genkey   정적 키쌍을 만든다
+  run      설정을 읽고 TUN 인터페이스를 만들고 돈다
+  status   지금 붙어 있는 상대를 보여 준다
+  reload   도는 중에 설정을 다시 읽는다
+`
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	cmd, args := os.Args[1], os.Args[2:]
+	var err error
+	switch cmd {
+	case "check":
+		err = runCheck(args)
+	case "genkey":
+		err = runGenkey(args)
+	case "run", "status", "reload":
+		err = fmt.Errorf("%s는 아직 만들지 않았습니다", cmd)
+	default:
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "오류:", err)
+		os.Exit(1)
+	}
+}
+
+func runCheck(args []string) error {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	dir := fs.String("c", "/etc/callsignet", "설정 디렉터리")
+	fs.Parse(args)
+
+	cfg, err := config.Load(*dir)
+	if err != nil {
+		return err
+	}
+	problems := cfg.Validate()
+	if len(problems) == 0 {
+		fmt.Printf("설정을 확인했습니다. peer %d개, 서비스 %d개입니다.\n",
+			len(cfg.Peers), countServices(cfg))
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "설정에 어긋난 곳이 %d군데 있습니다.\n\n", len(problems))
+	for _, p := range problems {
+		fmt.Fprintln(os.Stderr, "  "+p)
+	}
+	os.Exit(1)
+	return nil
+}
+
+func countServices(c *config.Config) int {
+	n := 0
+	for _, p := range c.Peers {
+		n += len(p.Services)
+	}
+	return n
+}
+
+func runGenkey(args []string) error {
+	fs := flag.NewFlagSet("genkey", flag.ExitOnError)
+	out := fs.String("o", "", "개인키를 쓸 파일. 비우면 화면에 찍는다")
+	fs.Parse(args)
+
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	// wg genkey와 같은 형태가 되도록 스칼라를 다듬는다.
+	b := priv.Bytes()
+	b[0] &= 248
+	b[31] &= 127
+	b[31] |= 64
+	clamped, err := ecdh.X25519().NewPrivateKey(b)
+	if err != nil {
+		return err
+	}
+	privB64 := base64.StdEncoding.EncodeToString(clamped.Bytes())
+	pubB64 := base64.StdEncoding.EncodeToString(clamped.PublicKey().Bytes())
+
+	if *out == "" {
+		fmt.Println(privB64)
+		fmt.Fprintln(os.Stderr, "공개키:", pubB64)
+		return nil
+	}
+	if err := os.WriteFile(*out, []byte(privB64+"\n"), 0o600); err != nil {
+		return err
+	}
+	fmt.Printf("개인키를 %s에 썼습니다. 소유자만 읽을 수 있습니다.\n", *out)
+	fmt.Println("공개키:", pubB64)
+	return nil
+}
