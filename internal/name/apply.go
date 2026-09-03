@@ -100,15 +100,21 @@ func (t *Takeover) applyFile(listenIP, domain string) error {
 	return nil
 }
 
-// writeResolvConf는 파일을 통째로 바꾼다. 심볼릭 링크였으면 지우고 새로 쓴다.
+// writeResolvConf는 파일을 통째로 바꾼다.
+//
+// 먼저 임시 파일을 만들어 이름을 바꾸는 방식을 쓴다. 읽는 쪽이 반쯤 쓰인 파일을
+// 보지 않게 하려는 것이다. 그런데 그 파일이 bind mount로 붙어 있으면 이름을
+// 바꿀 수 없다. 네트워크 네임스페이스 안이 그렇다. 그때는 제자리에 쓴다.
 func writeResolvConf(content string) error {
 	tmp := resolvConf + ".callsignet"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
-		return fmt.Errorf("%s를 쓰지 못했다: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, resolvConf); err != nil {
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err == nil {
+		if err := os.Rename(tmp, resolvConf); err == nil {
+			return nil
+		}
 		os.Remove(tmp)
-		return fmt.Errorf("%s를 바꾸지 못했다: %w", resolvConf, err)
+	}
+	if err := os.WriteFile(resolvConf, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("%s를 쓰지 못했다: %w", resolvConf, err)
 	}
 	return nil
 }
