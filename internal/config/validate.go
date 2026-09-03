@@ -36,6 +36,11 @@ func (c *Config) checkSelf() []string {
 	if s.ListenPort <= 0 || s.ListenPort > 65535 {
 		p = append(p, fmt.Sprintf("listen-port가 범위를 벗어났다: %d", s.ListenPort))
 	}
+	if s.DNS.Listen == "" {
+		p = append(p, "csa.toml에 dns.listen이 없다")
+	} else if _, err := netip.ParseAddrPort(s.DNS.Listen); err != nil {
+		p = append(p, fmt.Sprintf("dns.listen을 읽을 수 없다: %s", s.DNS.Listen))
+	}
 	if s.Tun.MTU != 0 && (s.Tun.MTU < 1280 || s.Tun.MTU > 1500) {
 		p = append(p, fmt.Sprintf("tun.mtu가 범위를 벗어났다: %d", s.Tun.MTU))
 	}

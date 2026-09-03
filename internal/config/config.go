@@ -30,6 +30,7 @@ type Tun struct {
 
 type DNS struct {
 	Listen string `toml:"listen"`
+	TTL    int    `toml:"ttl"`
 }
 
 // Service는 어느 peer에서 도는 앱 하나다.
