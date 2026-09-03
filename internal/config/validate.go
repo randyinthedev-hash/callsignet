@@ -48,7 +48,7 @@ func (c *Config) checkSelf() []string {
 	// 이 머신이 이미 쓰는 대역과 겹치면 원래 가던 트래픽이 터널로 들어간다.
 	for _, local := range localPrefixes() {
 		if cidr.Overlaps(local) {
-			p = append(p, fmt.Sprintf("tunnel-cidr %s가 이 머신이 이미 쓰는 %s와 겹친다", cidr, local))
+			p = append(p, fmt.Sprintf("tunnel-cidr가 이 머신이 이미 쓰는 대역과 겹친다: %s, %s", cidr, local))
 		}
 	}
 	return p
@@ -77,7 +77,7 @@ func (c *Config) checkPeers() []string {
 		if peer.PublicKey == "" {
 			p = append(p, fmt.Sprintf("%s에 public-key가 없다", peer.PeerID))
 		} else if other, dup := seenKey[peer.PublicKey]; dup {
-			p = append(p, fmt.Sprintf("같은 공개키가 %s와 %s에 나타난다", other, peer.PeerID))
+			p = append(p, fmt.Sprintf("같은 공개키가 두 peer에 나타난다: %s, %s", other, peer.PeerID))
 		} else {
 			seenKey[peer.PublicKey] = peer.PeerID
 		}
@@ -85,21 +85,21 @@ func (c *Config) checkPeers() []string {
 		ip, err := netip.ParseAddr(peer.TunnelIP)
 		switch {
 		case err != nil:
-			p = append(p, fmt.Sprintf("%s의 tunnel-ip를 읽을 수 없다: %s", peer.PeerID, peer.TunnelIP))
+			p = append(p, fmt.Sprintf("tunnel-ip를 읽을 수 없다: %s의 %s", peer.PeerID, peer.TunnelIP))
 		default:
 			if other, dup := seenIP[peer.TunnelIP]; dup {
-				p = append(p, fmt.Sprintf("터널 IP %s가 %s와 %s에 겹친다", peer.TunnelIP, other, peer.PeerID))
+				p = append(p, fmt.Sprintf("터널 IP가 겹친다: %s (%s, %s)", peer.TunnelIP, other, peer.PeerID))
 			} else {
 				seenIP[peer.TunnelIP] = peer.PeerID
 			}
 			if cidrOK == nil && !cidr.Contains(ip) {
-				p = append(p, fmt.Sprintf("%s의 터널 IP %s가 tunnel-cidr %s 밖이다", peer.PeerID, ip, cidr))
+				p = append(p, fmt.Sprintf("터널 IP가 tunnel-cidr 밖이다: %s의 %s (cidr %s)", peer.PeerID, ip, cidr))
 			}
 		}
 
 		for _, ep := range peer.Endpoints {
 			if _, err := netip.ParseAddrPort(ep); err != nil {
-				p = append(p, fmt.Sprintf("%s의 endpoint를 읽을 수 없다: %s", peer.PeerID, ep))
+				p = append(p, fmt.Sprintf("endpoint를 읽을 수 없다: %s의 %s", peer.PeerID, ep))
 			}
 		}
 		seenApp := map[string]bool{}
@@ -108,17 +108,17 @@ func (c *Config) checkPeers() []string {
 				p = append(p, fmt.Sprintf("%s에 이름 없는 service가 있다", peer.PeerID))
 			}
 			if seenApp[svc.App] {
-				p = append(p, fmt.Sprintf("%s에 app %s가 두 번 나온다", peer.PeerID, svc.App))
+				p = append(p, fmt.Sprintf("app이 두 번 나온다: %s의 %s", peer.PeerID, svc.App))
 			}
 			seenApp[svc.App] = true
 			if svc.Port <= 0 || svc.Port > 65535 {
-				p = append(p, fmt.Sprintf("%s/%s의 port가 범위를 벗어났다: %d", peer.PeerID, svc.App, svc.Port))
+				p = append(p, fmt.Sprintf("port가 범위를 벗어났다: %s/%s의 %d", peer.PeerID, svc.App, svc.Port))
 			}
 		}
 	}
 
 	if c.Self.PeerID != "" && !seenID[c.Self.PeerID] {
-		p = append(p, fmt.Sprintf("csa.toml의 peer-id %s가 peers.toml에 없다", c.Self.PeerID))
+		p = append(p, fmt.Sprintf("csa.toml의 peer-id가 peers.toml에 없다: %s", c.Self.PeerID))
 	}
 	return p
 }
@@ -129,11 +129,11 @@ func (c *Config) checkPolicy() []string {
 
 	for _, in := range c.Policy.Inbound {
 		if self != nil && !hasApp(self.Services, in.App) {
-			p = append(p, fmt.Sprintf("inbound가 가리키는 app %s가 이 머신의 서비스에 없다", in.App))
+			p = append(p, fmt.Sprintf("inbound가 가리키는 app이 이 머신의 서비스에 없다: %s", in.App))
 		}
 		for _, id := range in.Allow {
 			if c.Find(id) == nil {
-				p = append(p, fmt.Sprintf("inbound의 allow가 가리키는 %s가 peers.toml에 없다", id))
+				p = append(p, fmt.Sprintf("inbound의 allow가 가리키는 peer가 peers.toml에 없다: %s", id))
 			}
 		}
 		for _, cidr := range in.AllowCIDR {
@@ -145,13 +145,13 @@ func (c *Config) checkPolicy() []string {
 		if len(in.AllowCIDR) > 0 {
 			switch {
 			case in.Expires == "":
-				p = append(p, fmt.Sprintf("app %s의 allow-cidr에 expires가 없다", in.App))
+				p = append(p, fmt.Sprintf("allow-cidr에 expires가 없다: app %s", in.App))
 			default:
 				t, err := time.Parse("2006-01-02", in.Expires)
 				if err != nil {
-					p = append(p, fmt.Sprintf("app %s의 expires를 읽을 수 없다: %s", in.App, in.Expires))
+					p = append(p, fmt.Sprintf("expires를 읽을 수 없다: app %s의 %s", in.App, in.Expires))
 				} else if t.Before(time.Now()) {
-					p = append(p, fmt.Sprintf("app %s의 allow-cidr가 %s에 만료됐다", in.App, in.Expires))
+					p = append(p, fmt.Sprintf("allow-cidr가 이미 만료됐다: app %s, %s", in.App, in.Expires))
 				}
 			}
 		}
@@ -165,11 +165,11 @@ func (c *Config) checkPolicy() []string {
 		}
 		peer := c.Find(id)
 		if peer == nil {
-			p = append(p, fmt.Sprintf("outbound가 가리키는 %s가 peers.toml에 없다", id))
+			p = append(p, fmt.Sprintf("outbound가 가리키는 peer가 peers.toml에 없다: %s", id))
 			continue
 		}
 		if !hasApp(peer.Services, app) {
-			p = append(p, fmt.Sprintf("%s에 app %s가 없다", id, app))
+			p = append(p, fmt.Sprintf("peer에 app이 없다: %s의 %s", id, app))
 		}
 	}
 	return p
