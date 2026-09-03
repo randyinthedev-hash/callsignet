@@ -18,9 +18,8 @@ const DefaultTTL = 300
 type Server struct {
 	table *Table
 	ttl   uint32
-	logf  func(string, ...any)
-	udp   *dns.Server
-	tcp   *dns.Server
+	logf    func(string, ...any)
+	servers []*dns.Server
 }
 
 // NewServer는 표를 받아 서버를 만든다. 아직 열지는 않는다.
@@ -31,23 +30,40 @@ func NewServer(t *Table, ttl int, logf func(string, ...any)) *Server {
 	return &Server{table: t, ttl: uint32(ttl), logf: logf}
 }
 
-// Start는 주어진 주소에서 UDP와 TCP로 질의를 받기 시작한다.
-func (s *Server) Start(listen string) error {
+// Start는 주어진 주소들에서 UDP와 TCP로 질의를 받기 시작한다.
+//
+// 루프백 주소와 터널 IP 둘 다에서 받는다. /etc/resolv.conf에는 포트를 적을 수
+// 없어 루프백 주소가 필요하고, systemd-resolved는 루프백 주소를 받아 주지 않아
+// 터널 IP가 필요하다.
+func (s *Server) Start(listens ...string) error {
+	for _, l := range listens {
+		if l == "" {
+			continue
+		}
+		if err := s.startOne(l); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) startOne(listen string) error {
 	mux := dns.NewServeMux()
 	mux.HandleFunc(".", s.handle)
-	s.udp = &dns.Server{Addr: listen, Net: "udp", Handler: mux}
-	s.tcp = &dns.Server{Addr: listen, Net: "tcp", Handler: mux}
+	udp := &dns.Server{Addr: listen, Net: "udp", Handler: mux}
+	tcp := &dns.Server{Addr: listen, Net: "tcp", Handler: mux}
+	s.servers = append(s.servers, udp, tcp)
 
 	ready := make(chan error, 2)
-	s.udp.NotifyStartedFunc = func() { ready <- nil }
+	udp.NotifyStartedFunc = func() { ready <- nil }
 	go func() {
-		if err := s.udp.ListenAndServe(); err != nil {
-			ready <- fmt.Errorf("이름 해석기를 열지 못했다: %w", err)
+		if err := udp.ListenAndServe(); err != nil {
+			ready <- fmt.Errorf("이름 해석기를 열지 못했다: %s: %w", listen, err)
 		}
 	}()
 	go func() {
-		if err := s.tcp.ListenAndServe(); err != nil {
-			s.logf("이름 해석기 TCP를 열지 못했습니다: %v", err)
+		if err := tcp.ListenAndServe(); err != nil {
+			s.logf("이름 해석기 TCP를 열지 못했습니다: %s: %v", listen, err)
 		}
 	}()
 	select {
@@ -64,11 +80,8 @@ func (s *Server) Start(listen string) error {
 
 // Close는 서버를 닫는다.
 func (s *Server) Close() {
-	if s.udp != nil {
-		s.udp.Shutdown()
-	}
-	if s.tcp != nil {
-		s.tcp.Shutdown()
+	for _, srv := range s.servers {
+		srv.Shutdown()
 	}
 }
 

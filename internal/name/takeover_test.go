@@ -6,20 +6,24 @@ import (
 )
 
 func TestDetect(t *testing.T) {
+	stub := "nameserver 127.0.0.53\n"
+	other := "nameserver 10.0.0.53\n"
 	cases := []struct {
-		link string
-		rc   bool
-		want Manager
+		name    string
+		link    string
+		content string
+		want    Manager
 	}{
-		{"../run/systemd/resolve/stub-resolv.conf", true, ManagerResolved},
-		{"/run/systemd/resolve/resolv.conf", true, ManagerResolved},
-		{"/run/NetworkManager/resolv.conf", false, ManagerNetworkManager},
-		{"", false, ManagerFile},
-		{"", true, ManagerFile}, // resolvectl이 있어도 거치지 않으면 직접 고친다
+		{"stub을 가리키면 resolved", "../run/systemd/resolve/stub-resolv.conf", stub, ManagerResolved},
+		{"내용이 비면 링크로 가린다", "/run/systemd/resolve/resolv.conf", "", ManagerResolved},
+		{"NetworkManager 링크", "/run/NetworkManager/resolv.conf", "", ManagerNetworkManager},
+		{"평범한 파일", "", other, ManagerFile},
+		{"링크는 systemd인데 내용은 다른 리졸버", "../run/systemd/resolve/stub-resolv.conf", other, ManagerFile},
+		{"아무것도 없다", "", "", ManagerFile},
 	}
 	for _, c := range cases {
-		if got := Detect(c.link, c.rc); got != c.want {
-			t.Errorf("%q는 %s여야 하는데 %s", c.link, c.want, got)
+		if got := Detect(c.link, c.content, true); got != c.want {
+			t.Errorf("%s: %s여야 하는데 %s", c.name, c.want, got)
 		}
 	}
 }

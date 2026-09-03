@@ -29,17 +29,30 @@ func (m Manager) String() string {
 	}
 }
 
-// Detect는 /etc/resolv.conf가 무엇을 가리키는지 보고 관리 주체를 가린다.
-// link는 그 파일이 심볼릭 링크일 때 가리키는 곳이고, 아니면 빈 값이다.
-func Detect(link string, hasResolvectl bool) Manager {
+// ResolvedStub은 systemd-resolved가 질의를 받는 주소다.
+const ResolvedStub = "127.0.0.53"
+
+// Detect는 관리 주체를 가린다.
+//
+// 파일 내용을 먼저 본다. 앱이 실제로 어디에 묻는지가 거기 적혀 있기 때문이다.
+// 심볼릭 링크가 어디를 가리키는지는 그다음에 본다. 링크만 보면 속을 수 있다.
+// 네트워크 네임스페이스는 다른 파일을 그 자리에 붙이면서 링크는 그대로 두기
+// 때문이다.
+func Detect(link, content string, hasResolvectl bool) Manager {
+	for _, up := range upstreams(content) {
+		if up == ResolvedStub {
+			return ManagerResolved
+		}
+	}
+	if len(upstreams(content)) > 0 {
+		// 다른 리졸버를 가리키고 있다. 그 파일을 우리가 고친다.
+		return ManagerFile
+	}
 	switch {
 	case strings.Contains(link, "systemd"):
 		return ManagerResolved
 	case strings.Contains(link, "NetworkManager"):
 		return ManagerNetworkManager
-	case hasResolvectl && strings.Contains(link, "resolv.conf") && link != "":
-		// stub이 아닌 다른 곳을 가리키면 resolved가 있어도 그것을 거치지 않는다.
-		return ManagerFile
 	default:
 		return ManagerFile
 	}
