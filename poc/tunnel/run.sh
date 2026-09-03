@@ -70,10 +70,17 @@ echo "언더레이 확인"
 echo "== 키와 설정"
 PUB_A=$("$CSA" genkey -o "$WORK/a/private.key" | sed -n 's/^공개키: //p')
 PUB_B=$("$CSA" genkey -o "$WORK/b/private.key" | sed -n 's/^공개키: //p')
+PUB_C=$("$CSA" genkey -o "$WORK/c-unused.key" | sed -n 's/^공개키: //p')
 
 # 두 머신에 서로 다른 앱을 둔다. 이름 해석이 앱마다 다른 답을 내는지 보려는 것이다.
 APP_A=billing
 APP_B=report
+# srv-b에만 있는 앱이다. srv-a는 나가도 되지만 srv-b는 들이지 않는다. 받는 쪽이
+# 최종 판단 주체임을 확인하려고 정책을 일부러 어긋나게 둔다.
+APP_SECRET=secret
+PORT_SECRET=7070
+# 설정에는 있으나 정책에 없는 상대다. 이름은 풀리지만 통신은 막혀야 한다.
+WG_C=10.91.0.3
 
 peers_toml() {
   cat <<TOML
@@ -89,7 +96,14 @@ peer-id    = "srv-b"
 public-key = "$PUB_B"
 tunnel-ip  = "$WG_B"
 endpoints  = ["$IP_B:$PORT"]
-services   = [{ app = "$APP_B", port = 8080 }]
+services   = [{ app = "$APP_B", port = 8080 }, { app = "$APP_SECRET", port = $PORT_SECRET }]
+
+[[peer]]
+peer-id    = "srv-c"
+public-key = "$PUB_C"
+tunnel-ip  = "$WG_C"
+endpoints  = ["10.90.0.99:$PORT"]
+services   = [{ app = "idle", port = 8080 }]
 TOML
 }
 side() { # dir peer-id 상대 내앱 상대앱
@@ -109,15 +123,16 @@ mtu  = 1420
 listen = "127.0.0.54:53"
 TOML
   cat > "$WORK/$1/policy.toml" <<TOML
-outbound = ["$3/$5"]
+$6
 
 [[inbound]]
 app   = "$4"
 allow = ["$3"]
 TOML
 }
-side a srv-a srv-b "$APP_A" "$APP_B"
-side b srv-b srv-a "$APP_B" "$APP_A"
+# srv-a는 srv-b의 report와 secret에 나가도 된다. 그런데 srv-b는 report만 들인다.
+side a srv-a srv-b "$APP_A" "$APP_B" "outbound = [\"srv-b/$APP_B\", \"srv-b/$APP_SECRET\"]"
+side b srv-b srv-a "$APP_B" "$APP_A" "outbound = [\"srv-a/$APP_A\"]"
 
 echo "== 설정 검사"
 "$CSA" check -c "$WORK/a"
@@ -185,6 +200,36 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
     echo
     echo "확인됨. 앱이 이름으로 부르고 csa 둘이 터널로 나른다."
     [ "$NAME_OK" = 1 ] || { echo "다만 이름 해석에 틀린 것이 있습니다."; exit 1; }
+
+    echo
+    echo "== 정책 집행"
+    POL_OK=1
+    try_tcp() { ip netns exec "$NS_A" timeout 3 bash -c "echo > /dev/tcp/$1/$2" >/dev/null 2>&1 || true; }
+    saw() { # 파일 문구 설명
+      if grep -q "$2" "$1"; then printf '  ok    %s\n' "$3"
+      else printf '  틀림  %s\n' "$3"; POL_OK=0; fi
+    }
+
+    # 나가는 쪽. 정책에 없는 포트다.
+    try_tcp "$WG_B" 9999
+    # 나가는 쪽. 정책에 없는 상대다. ICMP에는 포트가 없다.
+    ip netns exec "$NS_A" ping -c 1 -W 1 "$WG_C" >/dev/null 2>&1 || true
+    # 받는 쪽. srv-a는 나가도 되지만 srv-b가 들이지 않는다.
+    try_tcp "$WG_B" "$PORT_SECRET"
+    sleep 0.5
+
+    saw "$WORK/a/csa.log" "나가는 연결을 막았습니다" "나가는 쪽이 정책에 없는 곳을 막는다"
+    saw "$WORK/a/csa.log" "모르는 상대다\|서비스가 없는 상대다" "나가는 쪽이 정책에 없는 상대를 막는다"
+    saw "$WORK/b/csa.log" "들어온 연결을 막았습니다" "받는 쪽이 정책에 없는 연결을 막는다"
+    if grep -q "들어온 연결을 막았습니다" "$WORK/a/csa.log"; then
+      printf '  틀림  %s\n' "허가된 연결을 받는 쪽이 막았다"; POL_OK=0
+    else
+      printf '  ok    %s\n' "허가된 연결은 그대로 지난다"
+    fi
+    [ "$POL_OK" = 1 ] || { echo; echo "--- a의 로그 ---"; grep 막았습니다 "$WORK/a/csa.log" || true
+                           echo "--- b의 로그 ---"; grep 막았습니다 "$WORK/b/csa.log" || true; exit 1; }
+    echo
+    echo "확인됨. 받는 쪽이 최종 판단을 한다."
   else
     echo "이름으로는 통하지 않습니다."; exit 1
   fi
