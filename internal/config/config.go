@@ -31,12 +31,24 @@ type Tun struct {
 // DefaultTunName은 csa.toml에 tun.name이 없을 때 쓰는 이름이다.
 const DefaultTunName = "cs0"
 
+// DefaultTunMTU는 csa.toml에 tun.mtu가 없을 때 쓰는 값이다. 바깥 인터페이스의
+// MTU가 1500이면 wg가 덧붙이는 60바이트를 더해도 들어간다.
+const DefaultTunMTU = 1420
+
 // TunName은 csa가 만들 인터페이스의 이름이다.
 func (s Self) TunName() string {
 	if s.Tun.Name == "" {
 		return DefaultTunName
 	}
 	return s.Tun.Name
+}
+
+// TunMTU는 csa가 만들 인터페이스의 MTU다.
+func (s Self) TunMTU() int {
+	if s.Tun.MTU == 0 {
+		return DefaultTunMTU
+	}
+	return s.Tun.MTU
 }
 
 type DNS struct {

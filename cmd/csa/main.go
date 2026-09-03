@@ -175,6 +175,9 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover, star
 		TunnelIP: self.TunnelIP,
 		Domain:   cfg.Self.Domain,
 		Resolver: took.Manager.String(),
+		MTU:      cfg.Self.TunMTU(),
+		MaxMSS:   dev.MaxMSS(),
+		Clamped:  dev.MSSClamped(),
 		Since:    started,
 	}
 	live := dev.Status()
