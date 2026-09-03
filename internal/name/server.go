@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -16,8 +17,9 @@ const DefaultTTL = 300
 
 // Server는 csa가 여는 이름 해석기다. 내부 도메인과 그 역방향 구역만 답한다.
 type Server struct {
-	table *Table
-	ttl   uint32
+	// table은 csa reload가 통째로 갈아 끼운다.
+	table   atomic.Pointer[Table]
+	ttl     uint32
 	logf    func(string, ...any)
 	servers []*dns.Server
 }
@@ -27,7 +29,9 @@ func NewServer(t *Table, ttl int, logf func(string, ...any)) *Server {
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
-	return &Server{table: t, ttl: uint32(ttl), logf: logf}
+	s := &Server{ttl: uint32(ttl), logf: logf}
+	s.table.Store(t)
+	return s
 }
 
 // Start는 주어진 주소들에서 UDP와 TCP로 질의를 받기 시작한다.
@@ -74,8 +78,14 @@ func (s *Server) startOne(listen string) error {
 	case <-time.After(3 * time.Second):
 		return fmt.Errorf("이름 해석기가 시작되지 않았다: %s", listen)
 	}
-	s.logf("이름 해석기를 열었습니다. 주소는 %s이고 도메인은 %s입니다.", listen, s.table.Domain)
+	s.logf("이름 해석기를 열었습니다. 주소는 %s이고 도메인은 %s입니다.", listen, s.table.Load().Domain)
 	return nil
+}
+
+// SetTable은 이름 표를 갈아 끼운다. csa reload가 쓴다. 이미 열려 있는 리슨
+// 주소는 그대로 두고 답하는 내용만 바꾼다.
+func (s *Server) SetTable(t *Table) {
+	s.table.Store(t)
 }
 
 // Close는 서버를 닫는다.
@@ -96,31 +106,32 @@ func (s *Server) handle(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	q := r.Question[0]
+	t := s.table.Load()
 	switch q.Qtype {
 	case dns.TypeA:
-		s.answerA(m, q)
+		s.answerA(t, m, q)
 	case dns.TypePTR:
-		s.answerPTR(m, q)
+		s.answerPTR(t, m, q)
 	case dns.TypeAAAA:
 		// 이름은 있으나 IPv6 주소가 없다. 없는 이름과 구별해야 한다.
-		if _, ok := s.table.Forward(q.Name); !ok {
+		if _, ok := t.Forward(q.Name); !ok {
 			m.SetRcode(r, dns.RcodeNameError)
 		}
 	default:
-		if !s.table.InDomain(q.Name) {
+		if !t.InDomain(q.Name) {
 			m.SetRcode(r, dns.RcodeRefused)
 		}
 	}
 	w.WriteMsg(m)
 }
 
-func (s *Server) answerA(m *dns.Msg, q dns.Question) {
-	if !s.table.InDomain(q.Name) {
+func (s *Server) answerA(t *Table, m *dns.Msg, q dns.Question) {
+	if !t.InDomain(q.Name) {
 		// 우리 도메인이 아니면 답할 자격이 없다.
 		m.Rcode = dns.RcodeRefused
 		return
 	}
-	ip, ok := s.table.Forward(q.Name)
+	ip, ok := t.Forward(q.Name)
 	if !ok || !ip.Is4() {
 		m.Rcode = dns.RcodeNameError
 		return
@@ -131,13 +142,13 @@ func (s *Server) answerA(m *dns.Msg, q dns.Question) {
 	})
 }
 
-func (s *Server) answerPTR(m *dns.Msg, q dns.Question) {
+func (s *Server) answerPTR(t *Table, m *dns.Msg, q dns.Question) {
 	ip, ok := ptrToAddr(q.Name)
 	if !ok {
 		m.Rcode = dns.RcodeRefused
 		return
 	}
-	machine, ok := s.table.Reverse(ip)
+	machine, ok := t.Reverse(ip)
 	if !ok {
 		m.Rcode = dns.RcodeNameError
 		return

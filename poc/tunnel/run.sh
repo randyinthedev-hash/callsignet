@@ -309,6 +309,62 @@ PYCHECK
     [ "$ST_OK" = 1 ] || { echo "$SJ"; exit 1; }
 
     echo
+    echo "== 설정 다시 읽기"
+    RL_OK=1
+    rl() { # 설명 기대문구 [파일]
+      out=$("$CSA" reload -c "$WORK/b" 2>&1 || true)
+      if printf '%s' "$out" | grep -q "$2"; then
+        printf '  ok    %s\n' "$1"
+      else
+        printf '  틀림  %s\n' "$1"; printf '%s\n' "$out" | sed 's/^/        /'; RL_OK=0
+      fi
+    }
+
+    rl "바뀐 것이 없으면 그렇게 알린다" "바뀐 것이 없습니다"
+
+    # 어긋난 설정은 걸지 않는다. csa는 앞서 읽은 설정 그대로 계속 돈다.
+    cp "$WORK/b/policy.toml" "$WORK/b/policy.toml.bak"
+    printf '\n[[inbound]]\napp   = "없는앱"\nallow = ["srv-a"]\n' >> "$WORK/b/policy.toml"
+    rl "어긋난 설정은 걸지 않는다" "아무것도 바꾸지 않았다"
+    mv "$WORK/b/policy.toml.bak" "$WORK/b/policy.toml"
+
+    # csa.toml은 도는 중에 바꿀 수 없다.
+    cp "$WORK/b/csa.toml" "$WORK/b/csa.toml.bak"
+    sed -i 's/^mtu  = 1420/mtu  = 1280/' "$WORK/b/csa.toml"
+    rl "csa.toml이 바뀌면 다시 띄우라고 한다" "다시 띄우라"
+    mv "$WORK/b/csa.toml.bak" "$WORK/b/csa.toml"
+
+    # 정책을 바꾸고 다시 읽으면 집행이 달라진다. 앞에서 srv-b가 막았던 앱이다.
+    printf '\n[[inbound]]\napp   = "%s"\nallow = ["srv-a"]\n' "$APP_SECRET" >> "$WORK/b/policy.toml"
+    rl "정책을 바꾸면 바꾸었다고 알린다" "정책을 바꾸었습니다"
+    ip netns exec "$NS_A" timeout 3 bash -c "echo > /dev/tcp/$WG_B/$PORT_SECRET" >/dev/null 2>&1 || true
+    sleep 0.5
+    if grep -q "들어온 연결을 받았습니다.*:$PORT_SECRET" "$WORK/b/csa.log"; then
+      printf '  ok    %s\n' "바뀐 정책대로 들인다"
+    else
+      printf '  틀림  %s\n' "여전히 막는다"; RL_OK=0
+    fi
+
+    # 상대를 더하면 이름 표도 함께 바뀐다.
+    PUB_D=$("$CSA" genkey -o "$WORK/d-unused.key" | sed -n 's/^공개키: //p')
+    printf '\n[[peer]]\npeer-id    = "srv-d"\npublic-key = "%s"\ntunnel-ip  = "10.91.0.4"\nendpoints  = ["10.90.0.98:%s"]\nservices   = [{ app = "ledger", port = 8080 }]\n' \
+      "$PUB_D" "$PORT" >> "$WORK/a/peers.toml"
+    out=$("$CSA" reload -c "$WORK/a" 2>&1 || true)
+    if printf '%s' "$out" | grep -q "더한 상대: srv-d"; then
+      printf '  ok    %s\n' "상대를 더하면 더했다고 알린다"
+    else
+      printf '  틀림  %s\n' "더한 상대를 알리지 않는다"; printf '%s\n' "$out" | sed 's/^/        /'; RL_OK=0
+    fi
+    got=$(ip netns exec "$NS_A" dig @127.0.0.54 +short +time=2 +tries=1 ledger.srv-d.cs.test.internal A 2>/dev/null | head -1)
+    if [ "$got" = "10.91.0.4" ]; then
+      printf '  ok    %s\n' "더한 상대의 이름이 바로 풀린다"
+    else
+      printf '  틀림  %s\n' "이름이 풀리지 않는다: ${got:-없음}"; RL_OK=0
+    fi
+
+    [ "$RL_OK" = 1 ] || exit 1
+
+    echo
     echo "== 되돌리기"
     kill "$PID_A" 2>/dev/null || true
     for _ in $(seq 20); do

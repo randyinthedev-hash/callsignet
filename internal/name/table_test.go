@@ -28,9 +28,9 @@ func table(t *testing.T) *Table {
 func TestForward(t *testing.T) {
 	tab := table(t)
 	cases := map[string]string{
-		"report.srv-b.cs.example.internal": "10.91.0.2",
-		"batch.srv-b.cs.example.internal":  "10.91.0.2",
-		"srv-b.cs.example.internal":        "10.91.0.2",
+		"report.srv-b.cs.example.internal":  "10.91.0.2",
+		"batch.srv-b.cs.example.internal":   "10.91.0.2",
+		"srv-b.cs.example.internal":         "10.91.0.2",
 		"billing.srv-a.cs.example.internal": "10.91.0.1",
 		"srv-a.cs.example.internal":         "10.91.0.1",
 		// 대소문자와 끝점은 가리지 않는다.
@@ -51,11 +51,11 @@ func TestForward(t *testing.T) {
 func TestForwardRefusesUnknown(t *testing.T) {
 	tab := table(t)
 	for _, name := range []string{
-		"srv-z.cs.example.internal",         // 없는 머신
-		"없는앱.srv-b.cs.example.internal",   // 없는 앱
-		"report.srv-a.cs.example.internal",  // 다른 머신의 앱
-		"cs.example.internal",               // 도메인 자체
-		"www.example.com",                   // 우리 도메인이 아니다
+		"srv-z.cs.example.internal",        // 없는 머신
+		"없는앱.srv-b.cs.example.internal",    // 없는 앱
+		"report.srv-a.cs.example.internal", // 다른 머신의 앱
+		"cs.example.internal",              // 도메인 자체
+		"www.example.com",                  // 우리 도메인이 아니다
 	} {
 		if _, ok := tab.Forward(name); ok {
 			t.Errorf("%s에 답하면 안 된다", name)

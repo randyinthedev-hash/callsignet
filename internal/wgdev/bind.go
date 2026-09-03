@@ -62,10 +62,11 @@ func (b *bind) wrap(fn conn.ReceiveFunc) conn.ReceiveFunc {
 // note는 낯선 곳에서 온 것을 적는다. 처음 열 번은 모두 적고 그다음부터는
 // 백 번마다 적는다. 쏟아져 들어와도 로그가 묻히지 않게 하려는 것이다.
 func (b *bind) note(from string) {
+	b.mu.Lock()
 	if b.known[from] {
+		b.mu.Unlock()
 		return
 	}
-	b.mu.Lock()
 	b.odd[from]++
 	n := b.odd[from]
 	b.mu.Unlock()
@@ -83,4 +84,11 @@ func (b *bind) Odd() map[string]int {
 		out[k] = v
 	}
 	return out
+}
+
+// setKnown은 등록된 접속 주소 목록을 갈아 끼운다. csa reload가 쓴다.
+func (b *bind) setKnown(known map[string]bool) {
+	b.mu.Lock()
+	b.known = known
+	b.mu.Unlock()
 }

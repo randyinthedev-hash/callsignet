@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	"github.com/randyinthedev-hash/callsignet/internal/config"
 	"github.com/randyinthedev-hash/callsignet/internal/policy"
@@ -18,10 +19,36 @@ import (
 // Device는 csa가 만든 TUN 인터페이스와 그 위에서 도는 wg다.
 type Device struct {
 	Name string
-	tun  tun.Device
+	flt  *filter
+	bnd  *bind
 	dev  *device.Device
+	// snap은 설정에서 뽑아 둔 값들이다. csa reload가 통째로 갈아 끼운다.
+	snap atomic.Pointer[snapshot]
+}
+
+// snapshot은 설정에서 미리 뽑아 둔 것이다. 패킷마다 설정을 훑지 않으려고 둔다.
+type snapshot struct {
+	cfg *config.Config
 	// pubOf는 peer-id로 그 상대의 공개키를 찾는다. wg에게 접속 주소를 물을 때 쓴다.
 	pubOf map[string]string
+	// known은 등록된 상대의 접속 주소다. 낯선 곳을 가릴 때 쓴다.
+	known map[string]bool
+}
+
+func newSnapshot(c *config.Config) *snapshot {
+	s := &snapshot{cfg: c, pubOf: map[string]string{}, known: map[string]bool{}}
+	for _, peer := range c.Peers {
+		if peer.PeerID == c.Self.PeerID {
+			continue
+		}
+		if hexKey, err := keyToHex(peer.PublicKey); err == nil {
+			s.pubOf[peer.PeerID] = hexKey
+		}
+		for _, ep := range peer.Endpoints {
+			s.known[ep] = true
+		}
+	}
+	return s
 }
 
 // Open은 TUN 인터페이스를 만들고, 터널 IP와 경로와 MTU를 걸고, wg를 시작한다.
@@ -64,30 +91,19 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 		return nil, err
 	}
 	// 감싸서 정책을 집행한다. wg가 읽는 자리가 나가는 쪽이고 쓰는 자리가 받는 쪽이다.
-	out := &Device{Name: real, pubOf: map[string]string{}}
-	known := map[string]bool{}
-	for _, peer := range c.Peers {
-		if peer.PeerID == c.Self.PeerID {
-			continue
-		}
-		if hexKey, err := keyToHex(peer.PublicKey); err == nil {
-			out.pubOf[peer.PeerID] = hexKey
-		}
-		for _, ep := range peer.Endpoints {
-			known[ep] = true
-		}
-	}
-	t := &filter{
-		Device: raw, rules: rules, logf: logf, flows: newFlows(),
-		observe: out.endpointOf,
-	}
+	out := &Device{Name: real}
+	snap := newSnapshot(c)
+	out.snap.Store(snap)
+	t := &filter{Device: raw, logf: logf, flows: newFlows(), observe: out.endpointOf}
+	t.rules.Store(rules)
+	b := newBind(snap.known, logf)
 
 	// CSA_DEBUG를 켜면 wg가 handshake와 세션을 어떻게 다루는지 모두 적는다.
 	verbose := func(f string, a ...any) {}
 	if os.Getenv("CSA_DEBUG") != "" {
 		verbose = func(f string, a ...any) { logf("wg: "+f, a...) }
 	}
-	d := device.NewDevice(t, newBind(known, logf), &device.Logger{
+	d := device.NewDevice(t, b, &device.Logger{
 		Verbosef: verbose,
 		Errorf:   func(f string, a ...any) { logf("wg 오류: "+f, a...) },
 	})
@@ -104,15 +120,41 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 		return nil, err
 	}
 	logf("TUN 인터페이스 %s를 열었습니다. 터널 IP는 %s입니다.", real, self.TunnelIP)
-	out.tun, out.dev = t, d
+	out.flt, out.bnd, out.dev = t, b, d
 	return out, nil
+}
+
+// Reload는 새 설정을 도는 csa에 건다.
+//
+// wg에는 바뀐 상대만 건다. 정책과 이름에 쓰는 값은 통째로 갈아 끼운다. 규칙을
+// 먼저 만들어 두고 wg를 건드리는 까닭은, 규칙을 만들다 실패하면 아무것도 바꾸지
+// 않은 채로 돌아가게 하려는 것이다.
+func (d *Device) Reload(c *config.Config) error {
+	uapi, err := UAPIReload(d.snap.Load().cfg, c)
+	if err != nil {
+		return err
+	}
+	rules, err := policy.New(c)
+	if err != nil {
+		return err
+	}
+	if uapi != "" {
+		if err := d.dev.IpcSet(uapi); err != nil {
+			return fmt.Errorf("wg 설정을 다시 걸지 못했다: %w", err)
+		}
+	}
+	snap := newSnapshot(c)
+	d.flt.rules.Store(rules)
+	d.bnd.setKnown(snap.known)
+	d.snap.Store(snap)
+	return nil
 }
 
 // endpointOf는 그 상대에게서 패킷이 실제로 온 주소를 wg에게 물어 돌려준다.
 // wg가 복호화하면서 짝을 맞춰 둔 값이다. 인증을 통과한 패킷일 때만 갱신되므로
 // 아무나 이 값을 바꿀 수 없다.
 func (d *Device) endpointOf(peerID string) string {
-	pub, ok := d.pubOf[peerID]
+	pub, ok := d.snap.Load().pubOf[peerID]
 	if !ok || d.dev == nil {
 		return ""
 	}
@@ -139,7 +181,7 @@ func (d *Device) Status() map[string]PeerStatus {
 		return out
 	}
 	byKey := parseStatus(state)
-	for peerID, pub := range d.pubOf {
+	for peerID, pub := range d.snap.Load().pubOf {
 		if p, ok := byKey[pub]; ok {
 			out[peerID] = p
 		}
