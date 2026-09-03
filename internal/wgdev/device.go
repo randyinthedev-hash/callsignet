@@ -5,6 +5,7 @@ package wgdev
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -87,10 +88,7 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 		return nil, err
 	}
 
-	mtu := c.Self.Tun.MTU
-	if mtu == 0 {
-		mtu = 1420
-	}
+	mtu := c.Self.TunMTU()
 	name := c.Self.TunName()
 
 	rules, err := policy.New(c)
@@ -111,7 +109,11 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 	out := &Device{Name: real}
 	snap := newSnapshot(c)
 	out.snap.Store(snap)
-	t := &filter{Device: raw, logf: logf, flows: newFlows(), observe: out.endpointOf}
+	t := &filter{
+		Device: raw, logf: logf, flows: newFlows(), observe: out.endpointOf,
+		// IP 헤더 20바이트와 TCP 헤더 20바이트를 뺀 것이 세그먼트에 쓸 수 있는 크기다.
+		maxMSS: uint16(mtu - 40),
+	}
 	t.rules.Store(rules)
 	b := newBind(snap.known, logf)
 
@@ -137,8 +139,54 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 		return nil, err
 	}
 	logf("TUN 인터페이스 %s를 열었습니다. 터널 IP는 %s입니다.", real, self.TunnelIP)
+	checkUnderlayMTU(c, mtu, logf)
 	out.flt, out.bnd, out.dev = t, b, d
 	return out, nil
+}
+
+// wgOverheadV4는 wg가 원래 IPv4 패킷에 덧붙이는 크기다. 바깥 IP 헤더 20바이트,
+// UDP 헤더 8바이트, wg 자신의 헤더와 인증 꼬리표 32바이트를 더한 값이다.
+const wgOverheadV4 = 60
+
+// checkUnderlayMTU는 터널 MTU가 바깥 인터페이스의 MTU 안에 들어가는지 보고
+// 운영자에게 알린다.
+//
+// 들어가지 않으면 큰 패킷이 조각나거나 조용히 사라진다. 작은 요청은 오가는데 큰
+// 응답에서 멈추는 증상으로 나타나 원인을 찾기 어렵다. 그래서 csa가 기동할 때
+// 스스로 견주어 적어 둔다. 막지는 않는다. 조직이 알고 그렇게 두는 경우가 있다.
+func checkUnderlayMTU(c *config.Config, mtu int, logf func(string, ...any)) {
+	seen := map[int]bool{}
+	for _, peer := range c.Peers {
+		if peer.PeerID == c.Self.PeerID {
+			continue
+		}
+		for _, ep := range peer.Endpoints {
+			ap, err := netip.ParseAddrPort(ep)
+			if err != nil {
+				continue
+			}
+			routes, err := netlink.RouteGet(net.IP(ap.Addr().AsSlice()))
+			if err != nil || len(routes) == 0 {
+				continue
+			}
+			link, err := netlink.LinkByIndex(routes[0].LinkIndex)
+			if err != nil || seen[routes[0].LinkIndex] {
+				continue
+			}
+			seen[routes[0].LinkIndex] = true
+
+			outer := link.Attrs().MTU
+			if mtu+wgOverheadV4 > outer {
+				logf("터널 MTU가 너무 큽니다. 바깥 인터페이스 %s의 MTU %d, 터널 MTU %d,"+
+					" wg가 덧붙이는 크기 %d바이트입니다. csa.toml의 tun.mtu를 이 값 이하로 낮추십시오: %d",
+					link.Attrs().Name, outer, mtu, wgOverheadV4, outer-wgOverheadV4)
+			} else {
+				logf("터널 MTU를 확인했습니다. 바깥 인터페이스 %s의 MTU %d, 터널 MTU %d,"+
+					" wg가 덧붙이는 크기 %d바이트입니다.",
+					link.Attrs().Name, outer, mtu, wgOverheadV4)
+			}
+		}
+	}
 }
 
 // Reload는 새 설정을 도는 csa에 건다.
@@ -222,6 +270,12 @@ func (d *Device) Status() map[string]PeerStatus {
 	}
 	return out
 }
+
+// MaxMSS는 이 터널이 나를 수 있는 TCP 세그먼트 크기다.
+func (d *Device) MaxMSS() uint16 { return d.flt.maxMSS }
+
+// MSSClamped는 지금까지 TCP 최대 세그먼트 크기를 깎은 횟수다.
+func (d *Device) MSSClamped() uint64 { return d.flt.clamped.Load() }
 
 // Close는 wg를 멈추고 TUN 인터페이스를 닫는다.
 func (d *Device) Close() {

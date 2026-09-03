@@ -14,6 +14,7 @@ WG_A=10.91.0.1
 WG_B=10.91.0.2
 CIDR=10.91.0.0/24
 PORT=51820
+WG_IF=cs0
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -433,6 +434,48 @@ TOML
     fi
 
     [ "$BD_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
+
+    echo
+    echo "== MTU와 MSS"
+    MT_OK=1
+    # TUN 인터페이스의 MTU는 1420이다. IP 헤더 20과 ICMP 헤더 8을 빼면 1392가
+    # 조각내지 않고 보낼 수 있는 가장 큰 자료다. 그 경계를 양쪽에서 본다.
+    if ip netns exec "$NS_A" ping -c 1 -W 2 -M do -s 1392 -I "$WG_A" "$WG_B" >/dev/null 2>&1; then
+      printf '  ok    %s\n' "터널 MTU에 꼭 맞는 패킷이 지난다 (1392바이트)"
+    else
+      printf '  틀림  %s\n' "MTU 안인데 지나지 못한다 (1392바이트)"; MT_OK=0
+    fi
+    if ip netns exec "$NS_A" ping -c 1 -W 2 -M do -s 1393 -I "$WG_A" "$WG_B" >/dev/null 2>&1; then
+      printf '  틀림  %s\n' "MTU를 넘는데 지났다 (1393바이트)"; MT_OK=0
+    else
+      printf '  ok    %s\n' "터널 MTU를 넘는 패킷은 커널이 막는다 (1393바이트)"
+    fi
+    if grep -q "터널 MTU를 확인했습니다.*wg가 덧붙이는 크기 60바이트" "$WORK/a/csa.log"; then
+      printf '  ok    %s\n' "csa가 바깥 인터페이스 MTU와 견준다"
+    else
+      printf '  틀림  %s\n' "바깥 MTU와 견주지 않는다"
+      grep -i "MTU" "$WORK/a/csa.log" | sed 's/^/        /'; MT_OK=0
+    fi
+
+    # 경로에 advmss를 걸어 커널이 크게 알리게 만든다. 앱이 스스로 크기를 정하거나
+    # 운영자가 경로에 값을 박아 둔 경우가 이렇다. csa가 그것을 깎아야 한다.
+    before=$("$CSA" status -c "$WORK/a" -json | sed -n 's/.*"mss-clamped":\([0-9]*\).*/\1/p')
+    ip netns exec "$NS_A" ip route change "$CIDR" dev "$WG_IF" advmss 1460
+    ip netns exec "$NS_A" timeout 3 bash -c "echo > /dev/tcp/$WG_B/8080" >/dev/null 2>&1 || true
+    sleep 0.5
+    after=$("$CSA" status -c "$WORK/a" -json | sed -n 's/.*"mss-clamped":\([0-9]*\).*/\1/p')
+    if [ "${after:-0}" -gt "${before:-0}" ]; then
+      printf '  ok    %s\n' "크게 알리는 MSS를 깎는다 ($before -> $after)"
+    else
+      printf '  틀림  %s\n' "깎지 않았다 ($before -> $after)"; MT_OK=0
+    fi
+    if grep -q "TCP 최대 세그먼트 크기를 깎았습니다.*1380바이트" "$WORK/a/csa.log"; then
+      printf '  ok    %s\n' "처음 깎을 때 한 번 적는다"
+    else
+      printf '  틀림  %s\n' "깎았다고 적지 않는다"; MT_OK=0
+    fi
+
+    [ "$MT_OK" = 1 ] || { echo "--- a의 로그 ---"; tail -20 "$WORK/a/csa.log"; exit 1; }
 
     echo
     echo "== 되돌리기"

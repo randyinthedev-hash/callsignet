@@ -23,6 +23,12 @@ type filter struct {
 	rules atomic.Pointer[policy.Rules]
 	logf  func(string, ...any)
 	flows *flows
+	// maxMSS는 이 터널이 나를 수 있는 TCP 세그먼트 크기다. MTU에서 IP 헤더와
+	// TCP 헤더 각각 20바이트를 뺀 값이다.
+	maxMSS uint16
+	// clamped는 지금까지 깎은 횟수다. told는 처음 깎았을 때 한 번만 적으려고 둔다.
+	clamped atomic.Uint64
+	told    atomic.Bool
 	// observe는 그 상대의 지금 접속 주소를 돌려준다. wg가 복호화하면서 짝을
 	// 맞춰 둔 값이며, 연결이 열리는 그 순간에 읽어 기록에 붙인다.
 	observe func(peerID string) string
@@ -42,6 +48,7 @@ func (f *filter) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 			f.reject(pkt, d)
 			continue
 		}
+		f.clamp(pkt)
 		if kept != i {
 			copy(bufs[kept][offset:], pkt)
 			sizes[kept] = sizes[i]
@@ -59,6 +66,7 @@ func (f *filter) Write(bufs [][]byte, offset int) (int, error) {
 			continue
 		}
 		if f.allowIn(b[offset:]) {
+			f.clamp(b[offset:])
 			keep = append(keep, b)
 		}
 	}
@@ -66,6 +74,23 @@ func (f *filter) Write(bufs [][]byte, offset int) (int, error) {
 		return 0, nil
 	}
 	return f.Device.Write(keep, offset)
+}
+
+// clamp는 TCP SYN에 실린 최대 세그먼트 크기를 이 터널이 나를 수 있는 크기로
+// 깎는다. 나가는 쪽과 받는 쪽 양쪽에서 한다. 상대가 깎지 않고 보내는 경우가
+// 있기 때문이다.
+//
+// 처음 깎았을 때 한 번만 적는다. 연결마다 적으면 기록이 두 배가 된다. 몇 번
+// 깎았는지는 csa status가 보여 준다.
+func (f *filter) clamp(pkt []byte) {
+	if !policy.ClampMSS(pkt, f.maxMSS) {
+		return
+	}
+	f.clamped.Add(1)
+	if f.told.CompareAndSwap(false, true) {
+		f.logf("TCP 최대 세그먼트 크기를 깎았습니다. 이 터널이 나를 수 있는 크기는 %d바이트입니다."+
+			" 앞으로는 적지 않고 csa status에 셉니다.", f.maxMSS)
+	}
 }
 
 func (f *filter) allowOut(pkt []byte) (policy.Decision, bool) {
