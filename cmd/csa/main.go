@@ -175,9 +175,14 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover, star
 		}
 		row := control.PeerStatus{PeerID: p.PeerID, TunnelIP: p.TunnelIP}
 		if w, ok := live[p.PeerID]; ok {
-			row.Endpoint = w.Endpoint
 			row.Handshake = w.Handshake
 			row.RxBytes, row.TxBytes = w.RxBytes, w.TxBytes
+			// 접속 주소는 세션을 맺은 뒤에만 적는다. 아직 맺지 않았으면 wg가
+			// 내놓는 값은 peers.toml에 적힌 주소이고, 그것은 csa가 관측한 것이
+			// 아니다. 열 이름이 관측한 출발지이므로 그대로 적으면 틀린 말이 된다.
+			if !w.Handshake.IsZero() {
+				row.Endpoint = w.Endpoint
+			}
 		}
 		st.Peers = append(st.Peers, row)
 	}
