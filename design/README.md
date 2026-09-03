@@ -120,6 +120,10 @@ services   = [{ app = "report", port = 8080 }]
 ### policy.toml
 
 ```toml
+# 이 머신이 붙어도 되는 상대. 나가는 것을 미리 거르는 방어 한 겹이다.
+# TOML은 최상위 키를 표보다 먼저 읽으므로 이 줄이 위에 온다.
+outbound = ["srv-report-02/report"]
+
 # 이 머신에 붙어도 되는 상대. 집행의 근거다.
 [[inbound]]
 app   = "billing"
@@ -130,9 +134,6 @@ allow = ["srv-report-02", "srv-batch-03"]
 app        = "legacy"
 allow-cidr = ["10.0.5.0/24"]
 expires    = "2026-12-31"
-
-# 이 머신이 붙어도 되는 상대. 나가는 것을 미리 거르는 방어 한 겹이다.
-outbound = ["srv-report-02/report"]
 ```
 
 ### csa가 기동할 때 검사하는 것

@@ -55,7 +55,7 @@ func TestValidate(t *testing.T) {
 		{"개인키 파일이 없다", func(c *Config) { c.Self.PrivateKey = "/없는/경로" }, "개인키 파일"},
 		{"접속 주소를 읽을 수 없다", func(c *Config) { c.Peers[1].Endpoints = []string{"바보"} }, "endpoint"},
 		{"정책이 없는 peer를 가리킨다", func(c *Config) { c.Policy.Outbound = []string{"srv-z/report"} }, "peers.toml에 없다"},
-		{"정책이 없는 app을 가리킨다", func(c *Config) { c.Policy.Outbound = []string{"srv-b/없음"} }, "app 없음이 없다"},
+		{"정책이 없는 app을 가리킨다", func(c *Config) { c.Policy.Outbound = []string{"srv-b/없음"} }, "peer에 app이 없다"},
 		{"outbound 형태가 틀렸다", func(c *Config) { c.Policy.Outbound = []string{"srv-b"} }, "peer-id/app 형태"},
 		{"inbound가 없는 app을 가리킨다", func(c *Config) { c.Policy.Inbound[0].App = "없음" }, "이 머신의 서비스에 없다"},
 		{"allow-cidr에 만료가 없다", func(c *Config) {
@@ -113,11 +113,11 @@ endpoints  = ["10.0.5.1:51820"]
 services   = [{ app = "billing", port = 8080 }]
 `)
 	write("policy.toml", `
+outbound = ["srv-a/billing"]
+
 [[inbound]]
 app   = "billing"
 allow = ["srv-a"]
-
-outbound = ["srv-a/billing"]
 `)
 	c, err := Load(dir)
 	if err != nil {
