@@ -30,6 +30,7 @@ cleanup() {
   ip netns delete "$NS_A" 2>/dev/null || true
   ip netns delete "$NS_B" 2>/dev/null || true
   ip link delete "$BR" 2>/dev/null || true
+  rm -rf "/etc/netns/$NS_A" "/etc/netns/$NS_B"
 }
 trap cleanup EXIT
 cleanup
@@ -47,6 +48,14 @@ attach() { # ns addr
 }
 attach "$NS_A" "$IP_A"
 attach "$NS_B" "$IP_B"
+
+# csa가 리졸버 자리를 차지하는 부분은 아직 만들지 않았다. 하네스가 대신 잡아 준다.
+# ip netns exec는 /etc/netns/<이름>/resolv.conf가 있으면 그것을 /etc/resolv.conf
+# 자리에 붙여 준다.
+for ns in "$NS_A" "$NS_B"; do
+  mkdir -p "/etc/netns/$ns"
+  echo "nameserver 127.0.0.54" > "/etc/netns/$ns/resolv.conf"
+done
 
 # 언더레이가 먼저 통해야 한다. 여기서 막히면 터널 문제가 아니다.
 if ! ip netns exec "$NS_A" ping -c 2 -W 2 "$IP_B" >/dev/null 2>&1; then
@@ -138,7 +147,37 @@ for i in $(seq 20); do
 done
 if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; then
   echo
-  echo "확인됨. csa 둘이 터널을 세우고 터널 IP로 통신한다."
+  echo "== 이름 해석"
+  NAME_OK=1
+  check_dig() { # 질의 기대값 설명
+    got=$(ip netns exec "$NS_A" dig @127.0.0.54 +short +time=2 +tries=1 $1 2>/dev/null | head -1)
+    if [ "$got" = "$2" ]; then
+      printf '  ok    %-46s -> %s\n' "$3" "$got"
+    else
+      printf '  틀림  %-46s -> %s (기대 %s)\n' "$3" "${got:-없음}" "$2"; NAME_OK=0
+    fi
+  }
+  check_dig "report.srv-b.cs.test.internal A" "$WG_B"                    "서비스 이름"
+  check_dig "srv-b.cs.test.internal A"        "$WG_B"                    "머신 이름"
+  check_dig "-x $WG_B"                        "srv-b.cs.test.internal."  "역방향"
+
+  rc=$(ip netns exec "$NS_A" dig @127.0.0.54 +time=2 +tries=1 srv-z.cs.test.internal A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
+  if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "설정에 없는 이름"
+  else printf '  틀림  %-46s -> %s\n' "설정에 없는 이름" "${rc:-없음}"; NAME_OK=0; fi
+
+  rc=$(ip netns exec "$NS_A" dig @127.0.0.54 +time=2 +tries=1 www.example.com A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
+  if [ "$rc" = REFUSED ]; then printf '  ok    %-46s -> REFUSED\n' "우리 도메인이 아닌 이름"
+  else printf '  틀림  %-46s -> %s\n' "우리 도메인이 아닌 이름" "${rc:-없음}"; NAME_OK=0; fi
+
+  echo
+  echo "== 이름으로 ping"
+  if ip netns exec "$NS_A" ping -c 2 -W 2 report.srv-b.cs.test.internal; then
+    echo
+    echo "확인됨. 앱이 이름으로 부르고 csa 둘이 터널로 나른다."
+    [ "$NAME_OK" = 1 ] || { echo "다만 이름 해석에 틀린 것이 있습니다."; exit 1; }
+  else
+    echo "이름으로는 통하지 않습니다."; exit 1
+  fi
 else
   echo
   echo "실패했습니다."
