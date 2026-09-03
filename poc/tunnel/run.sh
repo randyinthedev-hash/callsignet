@@ -157,9 +157,9 @@ echo
 echo "== $WG_A 에서 $WG_B 로 ping"
 # 두 csa가 같은 순간에 뜨면 둘 다 handshake를 건다. 그러면 각자 상대의 응답을
 # 받을 자리를 이미 응답 상태로 덮어써서 첫 시도가 어긋난다. wg가 몇 초 뒤에
-# 다시 걸어 세션이 서므로 20초까지 기다린다.
+# 다시 걸어 세션이 서므로 45초까지 기다린다. 17초가 걸린 적이 있다.
 OK=0
-for i in $(seq 20); do
+for i in $(seq 45); do
   if ip netns exec "$NS_A" ping -c 1 -W 1 -I "$WG_A" "$WG_B" >/dev/null 2>&1; then
     echo "세션이 섰습니다. ${i}초 걸렸습니다."
     OK=1; break
