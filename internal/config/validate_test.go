@@ -19,6 +19,7 @@ func good(t *testing.T) *Config {
 			PeerID: "srv-a", PrivateKey: key, Domain: "cs.example.internal",
 			TunnelCIDR: "10.91.0.0/24", ListenPort: 51820,
 			Tun: Tun{Name: "cs0", MTU: 1420},
+			DNS: DNS{Listen: "127.0.0.54:53", TTL: 300},
 		},
 		Peers: []Peer{
 			{PeerID: "srv-a", PublicKey: "AAAA", TunnelIP: "10.91.0.1",
@@ -67,6 +68,8 @@ func TestValidate(t *testing.T) {
 		}, "만료됐다"},
 		{"포트가 범위를 벗어났다", func(c *Config) { c.Peers[0].Services[0].Port = 70000 }, "port가 범위"},
 		{"MTU가 범위를 벗어났다", func(c *Config) { c.Self.Tun.MTU = 9000 }, "mtu가 범위"},
+		{"dns.listen이 없다", func(c *Config) { c.Self.DNS.Listen = "" }, "dns.listen이 없다"},
+		{"dns.listen을 읽을 수 없다", func(c *Config) { c.Self.DNS.Listen = "포트없음" }, "dns.listen을 읽을 수 없다"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -103,6 +106,7 @@ mtu  = 1420
 
 [dns]
 listen = "127.0.0.54:53"
+ttl    = 300
 `)
 	write("peers.toml", `
 [[peer]]
@@ -123,7 +127,7 @@ allow = ["srv-a"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Self.PeerID != "srv-a" || c.Self.Tun.MTU != 1420 || c.Self.DNS.Listen != "127.0.0.54:53" {
+	if c.Self.PeerID != "srv-a" || c.Self.Tun.MTU != 1420 || c.Self.DNS.Listen != "127.0.0.54:53" || c.Self.DNS.TTL != 300 {
 		t.Fatalf("csa.toml을 잘못 읽었다: %+v", c.Self)
 	}
 	if len(c.Peers) != 1 || c.Peers[0].Services[0].Port != 8080 {
