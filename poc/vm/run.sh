@@ -103,7 +103,11 @@ runcmd:
 CLOUD
   printf 'instance-id: %s\nlocal-hostname: %s\n' "$1" "$1" > "$WORK/$1-meta-data"
   cloud-localds "$POOL/$1-seed.iso" "$WORK/$1-user-data" "$WORK/$1-meta-data"
-  qemu-img create -q -f qcow2 -F qcow2 -b "$2" "$POOL/$1.qcow2" 8G
+  # 크기를 적지 않는다. 바탕 이미지의 크기를 그대로 물려받아야 한다. 더 작게
+  # 적으면 디스크가 잘려 파티션 표의 뒷부분과 파일 시스템의 끝이 사라진다.
+  # Rocky는 10G이고 Ubuntu는 3.5G라, 8G로 적었더니 Rocky만 부팅하지 못했다.
+  qemu-img create -q -f qcow2 -F qcow2 -b "$2" "$POOL/$1.qcow2"
+  echo "  $1 디스크: $(qemu-img info --output=json "$POOL/$1.qcow2" | sed -n 's/.*"virtual-size": \([0-9]*\).*/\1/p' | head -1) 바이트"
 }
 # Rocky는 firewalld가 wg 포트를 막으므로 끈다. 이 시험이 볼 것은 리졸버다.
 seed "$VM_A" "$IMG_UBUNTU" "true"
@@ -146,7 +150,6 @@ boot() { # 이름 mac
     --disk "path=$POOL/$1-seed.iso,device=cdrom" \
     --network "network=$NET,mac=$2,model=virtio" \
     --osinfo detect=on,require=off \
-    --boot hd,cdrom \
     --serial "file,path=$CONSOLE_DIR/$1-console.log" \
     --graphics none --noautoconsole >/dev/null
 }
