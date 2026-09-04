@@ -13,6 +13,8 @@ BR=cs-br0
 IP_A=10.90.0.10
 IP_B=10.90.0.30
 IP_C=10.90.0.50
+# srv-a가 옮겨 갈 자리다. peers.toml에는 적지 않는다.
+IP_A2=10.90.0.11
 WG_A=10.91.0.1
 WG_B=10.91.0.2
 CIDR=10.91.0.0/24
@@ -641,6 +643,63 @@ TOML
     fi
 
     [ "$MT_OK" = 1 ] || { echo "--- a의 로그 ---"; tail -20 "$WORK/a/csa.log"; exit 1; }
+
+    echo
+    echo "== 오래 도는 동안"
+    LG_OK=1
+    peer_field() { # 설정디렉터리 peer-id 항목
+      "$CSA" status -c "$1" -json 2>/dev/null | python3 -c "
+import json, sys
+st = json.load(sys.stdin)
+for p in st['peers']:
+    if p['peer-id'] == sys.argv[1]:
+        print(p[sys.argv[2]])
+        break
+" "$2" "$3"
+    }
+
+    # 상태를 기억하는 방화벽이 UDP 흐름을 30초에 지우는 경우가 흔하다. wg가
+    # 25초마다 keepalive를 보내 그 흐름을 살려 둔다. 실제로 나가는지 본다.
+    before=$(peer_field "$WORK/a" srv-b tx-bytes)
+    echo "  30초 동안 아무것도 보내지 않고 기다립니다."
+    sleep 30
+    after=$(peer_field "$WORK/a" srv-b tx-bytes)
+    if [ "${after:-0}" -gt "${before:-0}" ]; then
+      printf '  ok    %s\n' "쉬는 동안에도 keepalive가 나간다 ($((after-before))바이트)"
+    else
+      printf '  틀림  %s\n' "keepalive가 나가지 않는다 ($before -> $after)"; LG_OK=0
+    fi
+    if ip netns exec "$NS_A" ping -c 1 -W 1 -I "$WG_A" "$WG_B" >/dev/null 2>&1; then
+      printf '  ok    %s\n' "쉬고 나서도 세션이 그대로다"
+    else
+      printf '  틀림  %s\n' "쉬고 나서 세션이 끊겼다"; LG_OK=0
+    fi
+
+    # srv-a가 다른 자리로 옮겨 간다. peers.toml에 적힌 주소는 그대로 두므로,
+    # 받는 쪽 csa는 관측으로만 새 자리를 안다.
+    ip netns exec "$NS_A" ip addr del "$IP_A/24" dev eth0
+    ip netns exec "$NS_A" ip addr add "$IP_A2/24" dev eth0
+    sleep 0.5
+    ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B" >/dev/null 2>&1 || true
+    sleep 1.5
+    got=$(peer_field "$WORK/b" srv-a endpoint)
+    if [ "$got" = "$IP_A2:$PORT" ]; then
+      printf '  ok    %s\n' "자리를 옮기면 관측한 출발지가 따라간다 ($IP_A -> $got)"
+    else
+      printf '  틀림  %s\n' "옛 자리를 그대로 들고 있다: ${got:-없음}"; LG_OK=0
+    fi
+    if grep -q "접속 주소가 바뀌었습니다.*상대 srv-a" "$WORK/b/csa.log"; then
+      printf '  ok    %s\n' "csa가 자리가 바뀐 것을 적는다"
+    else
+      printf '  틀림  %s\n' "자리가 바뀐 것을 적지 않는다"; LG_OK=0
+    fi
+    if grep -q "등록된 접속 주소가 아닌 곳에서 패킷이 왔습니다.*$IP_A2" "$WORK/b/csa.log"; then
+      printf '  ok    %s\n' "peers.toml에 없는 자리에서 온 것을 알아챈다"
+    else
+      printf '  틀림  %s\n' "낯선 자리를 알아채지 못한다"; LG_OK=0
+    fi
+
+    [ "$LG_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
 
     echo
     echo "== 되돌리기"

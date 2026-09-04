@@ -25,6 +25,7 @@ type Device struct {
 	flt  *filter
 	bnd  *bind
 	dev  *device.Device
+	logf func(string, ...any)
 	// snap은 설정에서 뽑아 둔 값들이다. csa reload가 통째로 갈아 끼운다.
 	snap atomic.Pointer[snapshot]
 	// eps는 wg에게 물어 얻은 상대별 접속 주소를 잠깐 들고 있는 자리다.
@@ -106,7 +107,7 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 		return nil, err
 	}
 	// 감싸서 정책을 집행한다. wg가 읽는 자리가 나가는 쪽이고 쓰는 자리가 받는 쪽이다.
-	out := &Device{Name: real}
+	out := &Device{Name: real, logf: logf}
 	snap := newSnapshot(c)
 	out.snap.Store(snap)
 	t := &filter{
@@ -230,6 +231,10 @@ func (d *Device) endpointOf(peerID string) string {
 }
 
 // readEndpoints는 wg에게 모든 상대의 접속 주소를 한 번에 묻는다.
+//
+// 앞서 물어 둔 값과 견주어 바뀐 것이 있으면 적는다. 상대가 다른 자리로 옮겨
+// 갔다는 뜻이다. 정책이 IP 대역을 보고 있으면 이때 판단이 달라지므로 운영자가
+// 알아야 한다.
 func (d *Device) readEndpoints() map[string]string {
 	out := map[string]string{}
 	if d.dev == nil {
@@ -243,6 +248,11 @@ func (d *Device) readEndpoints() map[string]string {
 	for peerID, pub := range d.snap.Load().pubOf {
 		if p, ok := byKey[pub]; ok && p.Endpoint != "" {
 			out[peerID] = p.Endpoint
+		}
+	}
+	for peerID, now := range out {
+		if was, had := d.eps.byID[peerID]; had && was != now {
+			d.logf("상대의 접속 주소가 바뀌었습니다. 상대 %s, 이전 %s, 지금 %s", peerID, was, now)
 		}
 	}
 	return out
