@@ -67,6 +67,10 @@ fetch() { # 주소 파일
 }
 fetch "$URL_UBUNTU" "$IMG_UBUNTU"
 fetch "$URL_ROCKY" "$IMG_ROCKY"
+for img in "$IMG_UBUNTU" "$IMG_ROCKY"; do
+  printf '  %-24s %s\n' "$(basename "$img")" \
+    "$(qemu-img info "$img" 2>&1 | grep -iE 'file format|virtual size' | tr '\n' ' ')"
+done
 
 echo "== 열쇠와 씨앗"
 ssh-keygen -q -t ed25519 -N "" -f "$WORK/id" -C csn-vm
@@ -107,7 +111,7 @@ CLOUD
   # 적으면 디스크가 잘려 파티션 표의 뒷부분과 파일 시스템의 끝이 사라진다.
   # Rocky는 10G이고 Ubuntu는 3.5G라, 8G로 적었더니 Rocky만 부팅하지 못했다.
   qemu-img create -q -f qcow2 -F qcow2 -b "$2" "$POOL/$1.qcow2"
-  echo "  $1 디스크: $(qemu-img info --output=json "$POOL/$1.qcow2" | sed -n 's/.*"virtual-size": \([0-9]*\).*/\1/p' | head -1) 바이트"
+  printf '  %-12s %s\n' "$1" "$(qemu-img info "$POOL/$1.qcow2" | grep -i 'virtual size')"
 }
 # Rocky는 firewalld가 wg 포트를 막으므로 끈다. 이 시험이 볼 것은 리졸버다.
 seed "$VM_A" "$IMG_UBUNTU" "true"
@@ -186,6 +190,10 @@ diagnose() { # 이름 주소
   done
   echo "  --- $1의 디스크와 직렬 포트 ---" >&2
   virsh dumpxml "$1" 2>/dev/null | sed -n "/<disk/,/<\/disk>/p;/<serial/,/<\/serial>/p" >&2 || true
+  echo "  --- libvirt가 남긴 $1 로그 마지막 30줄 ---" >&2
+  tail -30 "/var/log/libvirt/qemu/$1.log" 2>/dev/null >&2 || echo "    로그가 없습니다" >&2
+  echo "  --- $1 디스크 ---" >&2
+  qemu-img info "$POOL/$1.qcow2" >&2 2>&1 || true
 }
 echo "  붙기를 기다립니다. 두 머신이 뜨는 데 1분쯤 걸립니다."
 wait_ssh "$VM_A" "$IP_A"
