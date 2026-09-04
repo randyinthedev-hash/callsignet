@@ -136,25 +136,25 @@ virsh net-define "$WORK/net.xml" >/dev/null
 virsh net-start "$NET" >/dev/null
 
 echo "== VM 기동"
-# 버스와 장치 모델을 손으로 정한다. 이 머신에 osinfo-db가 없어 virt-install이
-# generic으로 떨어지고, 그러면 디스크를 virtio가 아닌 버스에 붙인다. Rocky
-# 클라우드 이미지의 initramfs에는 그 버스의 드라이버가 없어 루트를 찾지 못한다.
-# 씨앗 ISO는 기본 버스에 둔다. cloud-init이 사용자 공간에서 읽으므로 드라이버가
-# 이미 있다.
+# 버스를 손으로 정하지 않는다. virtio로 바꾸었더니 Rocky가 직렬 포트로 한
+# 바이트도 내지 않았다. 그 전에는 커널까지 갔다.
 #
-# 직렬 콘솔을 파일로 남긴다. 붙지 못했을 때 부팅이 어디서 멈췄는지 보려는 것이다.
+# 로그를 둘 남긴다. 직렬 콘솔은 커널이 뜬 뒤의 이야기이고, SeaBIOS 로그는 그
+# 앞의 이야기다. 커널까지 가지 못하면 직렬 콘솔이 비어 있어 아무것도 알 수 없다.
 # 콘솔 로그를 libvirt의 자리에 남긴다. 홈 디렉터리에 두면 AppArmor가 qemu의
 # 쓰기를 막아 아무것도 남지 않는다.
 CONSOLE_DIR=/var/log/libvirt/qemu
 boot() { # 이름 mac
   mkdir -p "$CONSOLE_DIR"
   : > "$CONSOLE_DIR/$1-console.log"
+  : > "$CONSOLE_DIR/$1-bios.log"
   virt-install --name "$1" --memory 2048 --vcpus 2 --import \
-    --disk "path=$POOL/$1.qcow2,format=qcow2,bus=virtio" \
+    --disk "path=$POOL/$1.qcow2,format=qcow2" \
     --disk "path=$POOL/$1-seed.iso,device=cdrom" \
-    --network "network=$NET,mac=$2,model=virtio" \
+    --network "network=$NET,mac=$2" \
     --osinfo detect=on,require=off \
     --serial "file,path=$CONSOLE_DIR/$1-console.log" \
+    --qemu-commandline="-chardev file,id=seabios,path=$CONSOLE_DIR/$1-bios.log -device isa-debugcon,iobase=0x402,chardev=seabios" \
     --graphics none --noautoconsole >/dev/null
 }
 boot "$VM_A" "$MAC_A"
@@ -188,6 +188,13 @@ diagnose() { # 이름 주소
     echo "  --- $vm 콘솔 ($(wc -c < "$CONSOLE_DIR/$vm-console.log" 2>/dev/null || echo 0)바이트) ---" >&2
     tail -30 "$CONSOLE_DIR/$vm-console.log" 2>/dev/null >&2 || echo "    로그가 없습니다" >&2
   done
+  echo "  --- $1 SeaBIOS 마지막 25줄 ---" >&2
+  tail -25 "$CONSOLE_DIR/$1-bios.log" 2>/dev/null >&2 || echo "    로그가 없습니다" >&2
+  # 손님이 실제로 돌고 있는지 본다. 멈춰 있으면 이 값이 늘지 않는다.
+  t1=$(virsh domstats "$1" --cpu-total 2>/dev/null | sed -n 's/.*cpu.time=\([0-9]*\).*/\1/p')
+  sleep 2
+  t2=$(virsh domstats "$1" --cpu-total 2>/dev/null | sed -n 's/.*cpu.time=\([0-9]*\).*/\1/p')
+  echo "  --- 2초 동안 쓴 CPU 시간: $(( (${t2:-0} - ${t1:-0}) / 1000000 ))밀리초 ---" >&2
   echo "  --- $1의 디스크와 직렬 포트 ---" >&2
   virsh dumpxml "$1" 2>/dev/null | sed -n "/<disk/,/<\/disk>/p;/<serial/,/<\/serial>/p" >&2 || true
   echo "  --- libvirt가 남긴 $1 로그 마지막 30줄 ---" >&2
