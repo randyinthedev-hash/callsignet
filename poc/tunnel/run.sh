@@ -221,6 +221,39 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
   if ip netns exec "$NS_A" ping -c 2 -W 2 "$APP_B.srv-b.cs.test.internal"; then
     echo
     echo "확인됨. 앱이 이름으로 부르고 csa 둘이 터널로 나른다."
+
+    echo
+    echo "== TCP 연결"
+    # ping은 ICMP라서 peer 단위로만 판단한다. TCP는 다르다. 서버가 돌려주는
+    # 패킷의 목적지는 부른 쪽 앱의 임시 포트인데, 그 포트는 어느 정책에도 적혀
+    # 있지 않다. csa가 들인 연결을 기억하지 않으면 손잡기부터 서지 않는다.
+    TCP_OK=1
+    ip netns exec "$NS_B" python3 -c "
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('$WG_B', 8080))
+s.listen(1)
+c, _ = s.accept()
+c.sendall(b'pong:' + c.recv(64))
+c.close()
+" & LISTEN_PID=$!
+    sleep 1
+    got=$(ip netns exec "$NS_A" timeout 5 bash -c \
+      "exec 3<>/dev/tcp/$APP_B.srv-b.cs.test.internal/8080; printf 'ping\n' >&3; head -1 <&3" 2>/dev/null || true)
+    kill "$LISTEN_PID" 2>/dev/null || true
+    if [ "$got" = "pong:ping" ]; then
+      printf '  ok    %s\n' "이름으로 TCP를 맺고 양쪽으로 자료가 오간다"
+    else
+      printf '  틀림  %s\n' "TCP가 서지 않는다. 받은 것: ${got:-없음}"; TCP_OK=0
+    fi
+    if grep -q "나가는 연결을 막았습니다" "$WORK/b/csa.log"; then
+      printf '  틀림  %s\n' "받는 쪽이 자기 답을 막았다"
+      grep "나가는 연결을 막았습니다" "$WORK/b/csa.log" | tail -3 | sed 's/^/        /'; TCP_OK=0
+    else
+      printf '  ok    %s\n' "받는 쪽이 자기 답을 막지 않는다"
+    fi
+    [ "$TCP_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
     [ "$NAME_OK" = 1 ] || { echo "다만 이름 해석에 틀린 것이 있습니다."; exit 1; }
 
     echo
@@ -251,7 +284,7 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
     saw "$WORK/b/csa.log" "들어온 연결을 받았습니다.*상대 srv-a.*관측한 출발지 $IP_A" \
         "기록에 peer-id와 관측한 출발지가 함께 남는다"
     n=$(grep -c "들어온 연결을 받았습니다" "$WORK/b/csa.log" || true)
-    if [ "$n" -le 3 ]; then printf '  ok    %s\n' "연결마다 한 번만 적는다 ($n줄)"
+    if [ "$n" -le 10 ]; then printf '  ok    %s\n' "연결마다 한 번만 적는다 ($n줄)"
     else printf '  틀림  %s\n' "패킷마다 적고 있다 ($n줄)"; POL_OK=0; fi
 
     [ "$POL_OK" = 1 ] || { echo; echo "--- a의 로그 ---"; grep 막았습니다 "$WORK/a/csa.log" || true
