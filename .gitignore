@@ -1,6 +1,7 @@
 # 실험 중 생성되는 키·상태 (절대 커밋하지 않는다)
 poc/cryptokey/_work/
 poc/tunnel/_work/
+poc/vm/_work/
 *.key
 *.privkey
 
@@ -21,4 +22,5 @@ _workspace/
 
 # Go
 /csa
+/csa-static
 *.test
