@@ -22,7 +22,10 @@ type filter struct {
 	// 읽으므로 반쯤 바뀐 규칙을 보지 않는다.
 	rules atomic.Pointer[policy.Rules]
 	logf  func(string, ...any)
+	// flows는 연결마다 한 번만 적으려고 둔다. conns는 csa가 들인 연결을 기억해
+	// 되돌아오는 패킷을 들이려고 둔다. 기억하는 시간이 달라 따로 둔다.
 	flows *flows
+	conns *flows
 	// maxMSS는 이 터널이 나를 수 있는 TCP 세그먼트 크기다. MTU에서 IP 헤더와
 	// TCP 헤더 각각 20바이트를 뺀 값이다.
 	maxMSS uint16
@@ -107,10 +110,18 @@ func (f *filter) allowOut(pkt []byte) (policy.Decision, bool) {
 	} else {
 		d = r.OutboundICMP(p.Dst)
 	}
-	if !f.flows.First(keyOf(p)) {
+	k := keyOf(p)
+	// 정책에 없어도 csa가 앞서 들인 연결의 답이면 내보낸다. 정책은 연결을 여는
+	// 쪽만 본다. 답의 목적지는 상대 앱의 임시 포트라 어느 서비스에도 적혀 있지
+	// 않다. 이것을 막으면 TCP가 서지 않는다.
+	if !d.Allow && f.conns.IsReply(k) {
+		return policy.Decision{Allow: true}, true
+	}
+	if !f.flows.First(k) {
 		return d, d.Allow
 	}
 	if d.Allow {
+		f.conns.Allow(k)
 		f.logf("나가는 연결을 엽니다. 상대 %s, 목적지 %s", f.peerName(r, p.Dst), portName(p))
 	} else {
 		f.logf("나가는 연결을 막았습니다. 목적지 %s, 까닭 %s", p.Dst, d.Reason)
@@ -138,7 +149,12 @@ func (f *filter) allowIn(pkt []byte) bool {
 		}
 		d = r.InboundICMP(p.Src, from)
 	}
-	if !f.flows.First(keyOf(p)) {
+	k := keyOf(p)
+	// 나가는 쪽과 같은 까닭이다. csa가 앞서 내보낸 연결의 답은 정책에 없어도 들인다.
+	if !d.Allow && f.conns.IsReply(k) {
+		return true
+	}
+	if !f.flows.First(k) {
 		return d.Allow
 	}
 	id := f.peerName(r, p.Src)
@@ -146,6 +162,7 @@ func (f *filter) allowIn(pkt []byte) bool {
 		f.logf("들어온 연결을 막았습니다. 상대 %s, 출발지 %s, 까닭 %s", id, p.Src, d.Reason)
 		return false
 	}
+	f.conns.Allow(k)
 	f.logf("들어온 연결을 받았습니다. 상대 %s, 관측한 출발지 %s, 목적지 %s",
 		id, f.observed(r, p.Src), portName(p))
 	return true

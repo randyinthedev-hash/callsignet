@@ -110,7 +110,8 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 	snap := newSnapshot(c)
 	out.snap.Store(snap)
 	t := &filter{
-		Device: raw, logf: logf, flows: newFlows(), observe: out.endpointOf,
+		Device: raw, logf: logf, observe: out.endpointOf,
+		flows: newFlows(logTTL, logMax), conns: newFlows(connTTL, connMax),
 		// IP 헤더 20바이트와 TCP 헤더 20바이트를 뺀 것이 세그먼트에 쓸 수 있는 크기다.
 		maxMSS: uint16(mtu - 40),
 	}
