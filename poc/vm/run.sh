@@ -128,14 +128,20 @@ virsh net-define "$WORK/net.xml" >/dev/null
 virsh net-start "$NET" >/dev/null
 
 echo "== VM 기동"
+# 버스와 장치 모델을 손으로 정한다. 이 머신에 osinfo-db가 없어 virt-install이
+# generic으로 떨어지고, 그러면 디스크를 virtio가 아닌 버스에 붙인다. Rocky
+# 클라우드 이미지의 initramfs에는 그 버스의 드라이버가 없어 루트를 찾지 못한다.
+# 씨앗 ISO는 기본 버스에 둔다. cloud-init이 사용자 공간에서 읽으므로 드라이버가
+# 이미 있다.
+#
 # 직렬 콘솔을 파일로 남긴다. 붙지 못했을 때 부팅이 어디서 멈췄는지 보려는 것이다.
 boot() { # 이름 mac
   : > "$WORK/$1-console.log"
   chmod 666 "$WORK/$1-console.log"
   virt-install --name "$1" --memory 2048 --vcpus 2 --import \
-    --disk "path=$POOL/$1.qcow2,format=qcow2" \
+    --disk "path=$POOL/$1.qcow2,format=qcow2,bus=virtio" \
     --disk "path=$POOL/$1-seed.iso,device=cdrom" \
-    --network "network=$NET,mac=$2" \
+    --network "network=$NET,mac=$2,model=virtio" \
     --osinfo detect=on,require=off \
     --serial "file,path=$WORK/$1-console.log" \
     --graphics none --noautoconsole >/dev/null

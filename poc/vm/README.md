@@ -27,6 +27,10 @@ sudo KEEP=1 make vm     # 확인이 끝나도 VM을 남긴다
 sudo make vm-teardown   # 남긴 것을 지운다
 ```
 
+## 버스를 손으로 정하는 까닭
+
+스크립트는 디스크를 `bus=virtio`에, 네트워크를 `model=virtio`에 붙인다. 이 머신에 `osinfo-db`가 없어 virt-install이 `generic`으로 떨어지고, 그러면 디스크를 virtio가 아닌 버스에 붙인다. Rocky 클라우드 이미지의 initramfs에는 그 버스의 드라이버가 없어 루트를 찾지 못하고 dracut 비상 셸로 떨어진다. Ubuntu는 드라이버를 넓게 담아 두어 그래도 뜬다.
+
 ## 무엇을 보나
 
 Ubuntu에서 넷을 본다. csa가 systemd-resolved 갈래를 타는가. `/etc/resolv.conf`를 건드리지 않는가. `cs0`에 내부 도메인을 등록하는가. 역방향 구역도 등록하는가.
