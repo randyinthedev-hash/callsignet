@@ -17,8 +17,6 @@ type Decision struct {
 
 // Rules는 설정에서 뽑아낸 허용 목록이다.
 type Rules struct {
-	// selfIP는 이 머신의 터널 IP다.
-	selfIP netip.Addr
 	// peerByIP는 터널 IP로 상대의 peer-id를 찾는다. wg가 출발지를 검사한 뒤이므로
 	// 이 대응은 위조할 수 없다.
 	peerByIP map[netip.Addr]string
@@ -105,13 +103,11 @@ func New(c *config.Config) (*Rules, error) {
 	if self == nil {
 		return nil, fmt.Errorf("csa.toml의 peer-id가 peers.toml에 없다: %s", c.Self.PeerID)
 	}
-	selfIP, err := netip.ParseAddr(self.TunnelIP)
-	if err != nil {
+	if _, err := netip.ParseAddr(self.TunnelIP); err != nil {
 		return nil, fmt.Errorf("이 머신의 터널 IP를 읽을 수 없다: %s", self.TunnelIP)
 	}
 
 	r := &Rules{
-		selfIP:     selfIP,
 		peerByIP:   map[netip.Addr]string{},
 		inbound:    map[uint16][]*rule{},
 		appByPort:  map[uint16]string{},
@@ -291,9 +287,6 @@ func (r *Rules) PeerOf(ip netip.Addr) (string, bool) {
 	id, ok := r.peerByIP[ip]
 	return id, ok
 }
-
-// SelfIP는 이 머신의 터널 IP다.
-func (r *Rules) SelfIP() netip.Addr { return r.selfIP }
 
 func (r *Rules) appName(port uint16) string {
 	if app, ok := r.appByPort[port]; ok {

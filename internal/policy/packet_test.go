@@ -64,7 +64,7 @@ func TestParseICMPHasNoPorts(t *testing.T) {
 
 func TestRejectICMP(t *testing.T) {
 	orig := ipv4("10.91.0.1", "10.91.0.9", protoTCP, 40000, 8080, 0)
-	out := RejectICMP(orig, netip.MustParseAddr("10.91.0.1"))
+	out := RejectICMP(orig)
 	if out == nil {
 		t.Fatal("만들지 못했다")
 	}
@@ -75,6 +75,11 @@ func TestRejectICMP(t *testing.T) {
 	// 원래 보낸 쪽에게 돌아가야 한다.
 	if p.Dst.String() != "10.91.0.1" {
 		t.Fatalf("보낸 쪽에게 가야 하는데 %s", p.Dst)
+	}
+	// 출발지는 원래 패킷의 목적지다. 이 머신의 주소를 쓰면 출발지와 목적지가
+	// 같아져 rp_filter가 엄격한 머신에서 커널이 버린다.
+	if p.Src.String() != "10.91.0.9" {
+		t.Fatalf("원래 목적지가 출발지여야 하는데 %s", p.Src)
 	}
 	if out[20] != 3 || out[21] != 13 {
 		t.Fatalf("관리자가 막았다는 뜻이어야 하는데 %d/%d", out[20], out[21])

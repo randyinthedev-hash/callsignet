@@ -51,8 +51,13 @@ func (p Packet) HasPorts() bool { return p.Proto == protoTCP || p.Proto == proto
 //
 // 원래 패킷의 IP 헤더와 그 뒤 8바이트를 담아 돌려준다. 앱의 커널이 그것을 보고
 // 어느 연결에 대한 응답인지 안다.
-func RejectICMP(orig []byte, from netip.Addr) []byte {
-	if len(orig) < 20 || !from.Is4() {
+//
+// 출발지는 원래 패킷의 목적지로 적는다. 이 머신의 터널 IP로 적으면 출발지와
+// 목적지가 둘 다 이 머신의 주소인 패킷이 TUN 인터페이스로 들어온다. rp_filter가
+// 엄격한 머신은 그것을 버리므로 앱이 아무것도 받지 못한다. 원래 목적지는 터널
+// 대역 안이고 그 대역으로 가는 경로가 TUN 인터페이스이므로 버려지지 않는다.
+func RejectICMP(orig []byte) []byte {
+	if len(orig) < 20 {
 		return nil
 	}
 	ihl := int(orig[0]&0x0f) * 4
@@ -72,10 +77,8 @@ func RejectICMP(orig []byte, from netip.Addr) []byte {
 	binary.BigEndian.PutUint16(out[2:4], uint16(total))
 	out[8] = 64 // TTL
 	out[9] = protoICMP
-	src := from.As4()
-	dst := [4]byte(orig[12:16]) // 원래 보낸 쪽에게 돌려준다
-	copy(out[12:16], src[:])
-	copy(out[16:20], dst[:])
+	copy(out[12:16], orig[16:20]) // 원래 패킷의 목적지가 이 응답의 출발지다
+	copy(out[16:20], orig[12:16]) // 원래 보낸 쪽에게 돌려준다
 	binary.BigEndian.PutUint16(out[10:12], checksum(out[:20]))
 	copy(out[20:], icmp)
 	return out
