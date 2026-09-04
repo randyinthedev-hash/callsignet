@@ -277,7 +277,12 @@ echo
 echo "== csa 기동"
 $SSH "root@$IP_A" 'nohup csa run -c /etc/callsignet > /var/log/csa.log 2>&1 & sleep 1'
 $SSH "root@$IP_B" 'nohup csa run -c /etc/callsignet > /var/log/csa.log 2>&1 & sleep 1'
-sleep 5
+sleep 8
+for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
+  set -- $pair
+  echo "  --- $2의 csa 로그 ---"
+  $SSH "root@$1" 'cat /var/log/csa.log' 2>/dev/null | sed 's/^/    /' || echo "    로그가 없습니다"
+done
 
 VM_OK=1
 say() { # ok/틀림 설명
@@ -288,9 +293,12 @@ on_b() { $SSH "root@$IP_B" "$1" 2>/dev/null || true; }
 
 echo
 echo "== A(Ubuntu) 리졸버 갈래"
-GOT=$(on_a 'sed -n "s/.*관리 주체는 \(.*\)입니다.*/\1/p" /var/log/csa.log | head -1')
-if [ "$GOT" = "systemd-resolved" ]; then say ok "systemd-resolved 갈래를 탄다"
-else say 틀림 "다른 갈래를 탔다: ${GOT:-없음}"; fi
+if on_a 'grep -q "관리 주체는 systemd-resolved입니다" /var/log/csa.log && echo yes' | grep -q yes; then
+  say ok "systemd-resolved 갈래를 탄다"
+else
+  say 틀림 "systemd-resolved 갈래를 타지 않았다"
+  on_a 'grep -i "관리 주체\|resolvectl\|이름 해석" /var/log/csa.log' | sed 's/^/        /'
+fi
 if [ -n "$(on_a 'test -L /etc/resolv.conf && echo yes')" ]; then
   say ok "/etc/resolv.conf를 건드리지 않는다"
 else say 틀림 "파일을 고쳤다"; fi
@@ -303,8 +311,7 @@ else say 틀림 "역방향 구역이 없다"; fi
 
 echo
 echo "== B(Rocky) 리졸버 갈래"
-GOT_B=$(on_b 'sed -n "s/.*관리 주체는 \(.*\)입니다.*/\1/p" /var/log/csa.log | head -1')
-echo "  csa가 판별한 관리 주체: ${GOT_B:-없음}"
+echo "  csa가 판별한 것: $(on_b 'grep "관리 주체는" /var/log/csa.log | head -1')"
 if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.0.54"; then
   say ok "자기를 첫 줄에 넣었다"
 else say 틀림 "파일을 가져가지 못했다"; on_b 'head -5 /etc/resolv.conf' | sed 's/^/        /'; fi
@@ -350,5 +357,17 @@ if ! on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.0.54"; then
 else say 틀림 "B에 csa의 줄이 남았다"; fi
 
 echo
-[ "$VM_OK" = 1 ] || { echo "어긋난 것이 있습니다."; exit 1; }
+if [ "$VM_OK" != 1 ]; then
+  echo "어긋난 것이 있습니다. 남은 것을 봅니다."
+  for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
+    set -- $pair
+    echo "--- $2의 resolv.conf ---"
+    $SSH "root@$1" 'ls -l /etc/resolv.conf; cat /etc/resolv.conf' 2>/dev/null | sed 's/^/    /' || true
+  done
+  echo "--- A의 resolvectl ---"
+  $SSH "root@$IP_A" 'resolvectl status cs0; resolvectl status | head -20' 2>/dev/null | sed 's/^/    /' || true
+  echo "--- A의 nsswitch ---"
+  $SSH "root@$IP_A" 'grep ^hosts /etc/nsswitch.conf' 2>/dev/null | sed 's/^/    /' || true
+  exit 1
+fi
 echo "확인됨. 실제 머신 둘에서 두 갈래가 모두 돈다."
