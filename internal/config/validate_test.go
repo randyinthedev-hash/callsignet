@@ -70,6 +70,14 @@ func TestValidate(t *testing.T) {
 		{"MTU가 범위를 벗어났다", func(c *Config) { c.Self.Tun.MTU = 9000 }, "mtu가 범위"},
 		{"dns.listen이 없다", func(c *Config) { c.Self.DNS.Listen = "" }, "dns.listen이 없다"},
 		{"dns.listen을 읽을 수 없다", func(c *Config) { c.Self.DNS.Listen = "포트없음" }, "dns.listen을 읽을 수 없다"},
+		{"guard.mode가 모르는 값이다", func(c *Config) { c.Self.Guard.Mode = "닫아" }, "guard.mode는"},
+		{"guard의 열어 둘 포트가 범위를 벗어났다", func(c *Config) {
+			c.Self.Guard.Mode = "all"
+			c.Self.Guard.KeepTCP = []int{70000}
+		}, "열어 둘 포트가 범위"},
+		{"열어 둘 포트를 쓰지 않는 모드에 적었다", func(c *Config) {
+			c.Self.Guard.KeepTCP = []int{22}
+		}, "all일 때만 쓴다"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
