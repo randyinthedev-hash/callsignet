@@ -189,6 +189,7 @@ func guardConfig(c *config.Config) guard.Config {
 		for _, svc := range self.Services {
 			g.Ports = append(g.Ports, svc.Port)
 		}
+		g.SelfIP, _ = netip.ParseAddr(self.TunnelIP)
 	}
 	return g
 }

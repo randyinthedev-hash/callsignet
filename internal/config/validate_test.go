@@ -1,17 +1,34 @@
 package config
 
 import (
+	"bytes"
+	"crypto/ecdh"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
+// 키를 정해진 값으로 만든다. 부를 때마다 같은 값이 나와야 두 설정을 견주는
+// 시험이 성립한다.
+func keyPair(t *testing.T, fill byte) (priv, pub string) {
+	t.Helper()
+	k, err := ecdh.X25519().NewPrivateKey(bytes.Repeat([]byte{fill}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(k.Bytes()),
+		base64.StdEncoding.EncodeToString(k.PublicKey().Bytes())
+}
+
 // 어긋난 곳이 없는 설정을 만든다. 각 시험은 여기서 한 군데만 어긋뜨린다.
 func good(t *testing.T) *Config {
 	t.Helper()
+	privA, pubA := keyPair(t, 1)
+	_, pubB := keyPair(t, 2)
 	key := filepath.Join(t.TempDir(), "private.key")
-	if err := os.WriteFile(key, []byte("Zm9v\n"), 0o600); err != nil {
+	if err := os.WriteFile(key, []byte(privA+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return &Config{
@@ -22,10 +39,10 @@ func good(t *testing.T) *Config {
 			DNS: DNS{Listen: "127.0.0.54:53", TTL: 300},
 		},
 		Peers: []Peer{
-			{PeerID: "srv-a", PublicKey: "AAAA", TunnelIP: "10.91.0.1",
+			{PeerID: "srv-a", PublicKey: pubA, TunnelIP: "10.91.0.1",
 				Endpoints: []string{"10.0.5.1:51820"},
 				Services:  []Service{{App: "billing", Port: 8080}}},
-			{PeerID: "srv-b", PublicKey: "BBBB", TunnelIP: "10.91.0.2",
+			{PeerID: "srv-b", PublicKey: pubB, TunnelIP: "10.91.0.2",
 				Endpoints: []string{"10.0.5.2:51820"},
 				Services:  []Service{{App: "report", Port: 8080}}},
 		},
@@ -51,7 +68,7 @@ func TestValidate(t *testing.T) {
 		{"자기 peer-id가 목록에 없다", func(c *Config) { c.Self.PeerID = "srv-x" }, "peers.toml에 없다"},
 		{"터널 IP가 겹친다", func(c *Config) { c.Peers[1].TunnelIP = "10.91.0.1" }, "겹친다"},
 		{"터널 IP가 대역 밖이다", func(c *Config) { c.Peers[1].TunnelIP = "10.92.0.2" }, "밖이다"},
-		{"공개키가 겹친다", func(c *Config) { c.Peers[1].PublicKey = "AAAA" }, "같은 공개키"},
+		{"공개키가 겹친다", func(c *Config) { c.Peers[1].PublicKey = c.Peers[0].PublicKey }, "같은 공개키"},
 		{"peer-id가 두 번 나온다", func(c *Config) { c.Peers[1].PeerID = "srv-a" }, "두 번 나온다"},
 		{"개인키 파일이 없다", func(c *Config) { c.Self.PrivateKey = "/없는/경로" }, "개인키 파일"},
 		{"접속 주소를 읽을 수 없다", func(c *Config) { c.Peers[1].Endpoints = []string{"바보"} }, "endpoint"},
@@ -78,6 +95,16 @@ func TestValidate(t *testing.T) {
 		{"열어 둘 포트를 쓰지 않는 모드에 적었다", func(c *Config) {
 			c.Self.Guard.KeepTCP = []int{22}
 		}, "all일 때만 쓴다"},
+		{"한 peer 안에서 포트가 겹친다", func(c *Config) {
+			c.Peers[0].Services = append(c.Peers[0].Services, Service{App: "admin", Port: 8080})
+		}, "포트가 겹친다"},
+		{"서비스 포트가 wg 포트와 같다", func(c *Config) {
+			c.Peers[0].Services[0].Port = c.Self.ListenPort
+		}, "listen-port와 같다"},
+		{"개인키와 자기 공개키가 짝이 아니다", func(c *Config) {
+			_, other := keyPair(t, 3)
+			c.Peers[0].PublicKey = other
+		}, "짝이 아니다"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

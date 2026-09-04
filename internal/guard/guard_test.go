@@ -19,13 +19,28 @@ func TestRulesetAlwaysKeepsTheseOpen(t *testing.T) {
 		for _, want := range []string{
 			`iifname "lo" accept`,
 			`iifname "cs0" accept`,
-			"ct state established,related accept",
 			"udp dport 51820 accept",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%v에 없다: %s\n%s", m, want, got)
 			}
 		}
+	}
+}
+
+// 이미 맺은 연결을 들이는 줄은 모두 버리는 모드에만 둔다.
+//
+// 서비스 포트만 닫는 모드에서는 그 줄이 필요 없다. 그 모드는 서비스 포트 말고
+// 아무것도 버리지 않기 때문이다. 그리고 그 줄을 두면 csa가 뜨기 전에 직통으로
+// 맺어진 연결이 conntrack에 남아 그대로 이어진다.
+func TestEstablishedOnlyInAllMode(t *testing.T) {
+	c := base()
+	if strings.Contains(Ruleset(c), "ct state") {
+		t.Errorf("서비스 포트만 닫는 모드에 이미 맺은 연결을 들이는 줄이 있다:\n%s", Ruleset(c))
+	}
+	c.Mode = ModeAll
+	if !strings.Contains(Ruleset(c), "ct state established,related accept") {
+		t.Errorf("모두 버리는 모드에는 그 줄이 있어야 한다:\n%s", Ruleset(c))
 	}
 }
 

@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/ecdh"
+	"encoding/base64"
 	"fmt"
 	"net"
 	"net/netip"
@@ -16,6 +18,7 @@ func (c *Config) Validate() []string {
 	p = append(p, c.checkSelf()...)
 	p = append(p, c.checkPeers()...)
 	p = append(p, c.checkPolicy()...)
+	p = append(p, c.checkKeyPair()...)
 	return p
 }
 
@@ -128,6 +131,7 @@ func (c *Config) checkPeers() []string {
 			}
 		}
 		seenApp := map[string]bool{}
+		seenPort := map[int]string{}
 		for _, svc := range peer.Services {
 			if svc.App == "" {
 				p = append(p, fmt.Sprintf("%s에 이름 없는 service가 있다", peer.PeerID))
@@ -138,6 +142,19 @@ func (c *Config) checkPeers() []string {
 			seenApp[svc.App] = true
 			if svc.Port <= 0 || svc.Port > 65535 {
 				p = append(p, fmt.Sprintf("port가 범위를 벗어났다: %s/%s의 %d", peer.PeerID, svc.App, svc.Port))
+			}
+			// 집행은 포트로 한다. 한 peer 안에서 포트가 겹치면 두 앱의 정책이
+			// 하나로 합쳐져, 한쪽에 준 권한이 다른 쪽까지 연다.
+			if other, dup := seenPort[svc.Port]; dup {
+				p = append(p, fmt.Sprintf("한 peer 안에서 포트가 겹친다: %s의 %d (%s, %s)",
+					peer.PeerID, svc.Port, other, svc.App))
+			} else {
+				seenPort[svc.Port] = svc.App
+			}
+			// 서비스 포트를 wg가 듣는 포트로 두면 직통 경로를 닫을 때 터널
+			// 자신이 막힌다.
+			if peer.PeerID == c.Self.PeerID && svc.Port == c.Self.ListenPort {
+				p = append(p, fmt.Sprintf("서비스 포트가 listen-port와 같다: %s의 %d", svc.App, svc.Port))
 			}
 		}
 	}
@@ -198,6 +215,36 @@ func (c *Config) checkPolicy() []string {
 		}
 	}
 	return p
+}
+
+// checkKeyPair는 개인키에서 공개키를 끌어내 peers.toml의 자기 항목과 견준다.
+//
+// 둘이 다르면 이 머신의 검사는 통과하지만 다른 머신이 기대하는 신원과 이 csa의
+// 키가 달라 아무와도 세션을 맺지 못한다. 막히는 것이 아니라 통하지 않는 잘못이고,
+// 운영자가 까닭을 찾기 매우 어렵다.
+func (c *Config) checkKeyPair() []string {
+	self := c.Find(c.Self.PeerID)
+	if self == nil || c.Self.PrivateKey == "" {
+		return nil // 다른 검사가 이미 잡는다
+	}
+	raw, err := os.ReadFile(c.Self.PrivateKey)
+	if err != nil {
+		return nil // 파일이 없는 것도 다른 검사가 잡는다
+	}
+	priv, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil || len(priv) != 32 {
+		return []string{fmt.Sprintf("개인키 파일의 내용이 32바이트 base64가 아니다: %s", c.Self.PrivateKey)}
+	}
+	key, err := ecdh.X25519().NewPrivateKey(priv)
+	if err != nil {
+		return []string{fmt.Sprintf("개인키를 쓸 수 없다: %s", c.Self.PrivateKey)}
+	}
+	got := base64.StdEncoding.EncodeToString(key.PublicKey().Bytes())
+	if got != strings.TrimSpace(self.PublicKey) {
+		return []string{fmt.Sprintf("개인키와 peers.toml의 자기 공개키가 짝이 아니다."+
+			" 개인키에서 나온 값 %s, peers.toml에 적힌 값 %s", got, self.PublicKey)}
+	}
+	return nil
 }
 
 func hasApp(svcs []Service, app string) bool {
