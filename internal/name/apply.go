@@ -104,7 +104,15 @@ func (t *Takeover) applyFile(listenIP, domain string) error {
 	if err := os.WriteFile(path, []byte(ResolvConf(string(old), listenIP, domain)), 0o644); err != nil {
 		return fmt.Errorf("%s를 쓰지 못했다: %w", path, err)
 	}
-	t.restore = func() error { return os.WriteFile(path, old, 0o644) }
+	// 되돌릴 때는 csa가 넣은 줄만 지운다. 통째로 되쓰면 csa가 도는 동안 다른
+	// 것이 고친 내용을 없앤다.
+	t.restore = func() error {
+		cur, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("%s를 읽지 못했다: %w", path, err)
+		}
+		return os.WriteFile(path, []byte(Restore(string(cur), listenIP, domain)), 0o644)
+	}
 	return nil
 }
 

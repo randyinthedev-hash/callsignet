@@ -35,8 +35,30 @@ func (k flowKey) reverse() flowKey {
 const (
 	logTTL  = 2 * time.Minute
 	logMax  = 4096
-	connTTL = time.Hour
 	connMax = 16384
+)
+
+// connTTL은 들인 연결을 기억하는 시간이다. 프로토콜마다 다르다.
+//
+// TCP는 연결이라는 것이 있고 오래 쉬다가 다시 말을 거는 경우가 있어 길게 잡는다.
+// UDP와 ICMP에는 연결이 없다. 같은 다섯 값을 쓰는 데이터그램을 한 시간짜리
+// 연결로 보면, 요청 하나가 그동안 되돌아오는 패킷을 모두 들이게 된다. 커널의
+// 연결 추적도 UDP를 짧게 잡는다.
+func connTTL(proto uint8) time.Duration {
+	switch proto {
+	case protoTCP:
+		return time.Hour
+	case protoUDP:
+		return 3 * time.Minute
+	default:
+		return time.Minute
+	}
+}
+
+// 프로토콜 번호. policy 꾸러미와 같은 값이다.
+const (
+	protoTCP = 6
+	protoUDP = 17
 )
 
 // flowState는 연결 하나에 대해 기억하는 것이다.
@@ -55,10 +77,26 @@ type flows struct {
 	seen map[flowKey]flowState
 	ttl  time.Duration
 	max  int
+	// byProto가 참이면 기억하는 시간을 프로토콜마다 다르게 잡는다.
+	byProto bool
 }
 
 func newFlows(ttl time.Duration, max int) *flows {
 	return &flows{seen: map[flowKey]flowState{}, ttl: ttl, max: max}
+}
+
+// newConns는 들인 연결을 기억하는 자리를 만든다. 기억하는 시간을 프로토콜마다
+// 다르게 잡는다.
+func newConns(max int) *flows {
+	return &flows{seen: map[flowKey]flowState{}, ttl: connTTL(protoTCP), max: max, byProto: true}
+}
+
+// ttlOf는 그 연결을 얼마나 기억할지 정한다.
+func (f *flows) ttlOf(k flowKey) time.Duration {
+	if f.byProto {
+		return connTTL(k.proto)
+	}
+	return f.ttl
 }
 
 // First는 이 연결을 처음 보았는지 알려 준다. 처음이면 true를 돌려주고 기억한다.
@@ -66,7 +104,7 @@ func (f *flows) First(k flowKey) bool {
 	now := time.Now()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if e, ok := f.seen[k]; ok && now.Sub(e.at) < f.ttl {
+	if e, ok := f.seen[k]; ok && now.Sub(e.at) < f.ttlOf(k) {
 		e.at = now
 		f.seen[k] = e
 		return false
@@ -97,7 +135,7 @@ func (f *flows) IsReply(k flowKey) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	e, ok := f.seen[rev]
-	if !ok || !e.allowed || now.Sub(e.at) >= f.ttl {
+	if !ok || !e.allowed || now.Sub(e.at) >= f.ttlOf(rev) {
 		return false
 	}
 	e.at = now
@@ -108,7 +146,7 @@ func (f *flows) IsReply(k flowKey) bool {
 // sweep은 오래된 것을 버린다. 자물쇠를 쥔 채로 부른다.
 func (f *flows) sweep(now time.Time) {
 	for k, e := range f.seen {
-		if now.Sub(e.at) >= f.ttl {
+		if now.Sub(e.at) >= f.ttlOf(k) {
 			delete(f.seen, k)
 		}
 	}

@@ -110,3 +110,27 @@ func TestResolvTargetFollowsLink(t *testing.T) {
 		t.Fatalf("상대 경로 링크를 따라가야 하는데 %s", got)
 	}
 }
+
+// 되돌릴 때 csa가 넣은 줄만 지운다. csa가 도는 동안 다른 것이 넣은 줄은 남긴다.
+func TestRestoreKeepsOtherChanges(t *testing.T) {
+	cur := Marker + "\n" +
+		"nameserver 127.0.0.54\n" +
+		"nameserver 10.0.0.53\n" +
+		"nameserver 10.0.0.54\n" + // csa가 도는 동안 DHCP가 넣었다고 하자
+		"search cs.example.internal\n" +
+		"search corp.example.com\n" +
+		"options edns0\n"
+	got := Restore(cur, "127.0.0.54", "cs.example.internal")
+
+	for _, gone := range []string{Marker, "nameserver 127.0.0.54", "search cs.example.internal"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("csa가 넣은 것이 남았다: %q\n%s", gone, got)
+		}
+	}
+	for _, keep := range []string{"nameserver 10.0.0.53", "nameserver 10.0.0.54",
+		"search corp.example.com", "options edns0"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("남의 줄을 지웠다: %q\n%s", keep, got)
+		}
+	}
+}

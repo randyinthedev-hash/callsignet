@@ -12,6 +12,7 @@ package guard
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"os/exec"
 	"sort"
 	"strings"
@@ -68,6 +69,9 @@ type Config struct {
 	WGPort int
 	// Ports는 이 머신의 서비스 포트다. ModeServices에서 이것만 닫는다.
 	Ports []int
+	// SelfIP는 이 머신의 터널 IP다. 밖으로 열린 포트를 셀 때 이 주소에 붙은
+	// 소켓은 빼고 센다. csa 자신이 거기서 듣기 때문이다.
+	SelfIP netip.Addr
 	// KeepTCP와 KeepUDP는 ModeAll에서 열어 둘 포트다.
 	KeepTCP []int
 	KeepUDP []int
@@ -90,10 +94,15 @@ func Ruleset(c Config) string {
 	b.WriteString("\t\ttype filter hook input priority filter; policy accept;\n")
 	b.WriteString("\t\tiifname \"lo\" accept\n")
 	fmt.Fprintf(&b, "\t\tiifname %q accept\n", c.Iface)
-	b.WriteString("\t\tct state established,related accept\n")
 	fmt.Fprintf(&b, "\t\tudp dport %d accept\n", c.WGPort)
 
 	if c.Mode == ModeAll {
+		// 이미 맺은 연결의 답을 들인다. 이 모드는 나머지를 모두 버리므로 이
+		// 줄이 없으면 이 머신이 먼저 건 연결의 답까지 막힌다.
+		//
+		// 여기서 따라오는 것이 있다. csa가 뜨기 전에 직통으로 맺어진 연결은
+		// conntrack에 남아 있어 이 줄을 지난다. csa는 그 연결을 끊지 않는다.
+		b.WriteString("\t\tct state established,related accept\n")
 		// ICMP를 버리면 경로 MTU 발견이 되지 않아 wg 자신의 패킷이 조용히
 		// 사라진다. 그래서 열어 둔다.
 		b.WriteString("\t\tmeta l4proto { icmp, ipv6-icmp } accept\n")
@@ -105,6 +114,9 @@ func Ruleset(c Config) string {
 		}
 		fmt.Fprintf(&b, "\t\tcounter name %q drop\n", counterName)
 	} else {
+		// 이 모드에는 이미 맺은 연결을 들이는 줄을 두지 않는다. 서비스 포트
+		// 말고는 아무것도 버리지 않으므로 그 줄이 필요 없고, 두면 csa가 뜨기
+		// 전에 직통으로 맺어진 연결이 그대로 이어진다.
 		for _, p := range dedup(c.Ports) {
 			fmt.Fprintf(&b, "\t\ttcp dport %d counter name %q drop\n", p, counterName)
 			fmt.Fprintf(&b, "\t\tudp dport %d counter name %q drop\n", p, counterName)
@@ -160,6 +172,7 @@ func (g *Guard) Apply(c Config) error {
 		return fmt.Errorf("직통 경로를 닫지 못했다: %v (%s)", err, strings.TrimSpace(string(out)))
 	}
 	g.on = true
+	g.tell(c)
 	switch c.Mode {
 	case ModeAll:
 		g.logf("직통 경로를 닫았습니다. 예외로 둔 포트 말고 모두 닫습니다."+
@@ -168,6 +181,40 @@ func (g *Guard) Apply(c Config) error {
 		g.logf("직통 경로를 닫았습니다. 이 머신의 서비스 포트만 닫습니다: %v", dedup(c.Ports))
 	}
 	return nil
+}
+
+// tell은 csa가 지키지 않는데 밖으로 열려 있는 포트를 찾아 알린다.
+//
+// csa가 닫는 것은 peers.toml에 적힌 서비스 포트뿐이다. 앱이 포트를 바꾸거나 새로
+// 열었는데 설정을 고치지 않으면 그 포트는 인증 없이 열려 있다. 운영자가 그것을
+// 알아채지 못하는 것이 이 검사를 두는 까닭이다.
+func (g *Guard) tell(c Config) {
+	known := map[int]bool{c.WGPort: true}
+	for _, p := range c.Ports {
+		known[p] = true
+	}
+	for _, p := range c.KeepTCP {
+		known[p] = true
+	}
+	for _, p := range c.KeepUDP {
+		known[p] = true
+	}
+	open, err := Exposed(known, c.SelfIP)
+	if err != nil {
+		g.logf("밖으로 열린 포트를 세지 못했습니다: %v", err)
+		return
+	}
+	if len(open) == 0 {
+		g.logf("csa가 지키지 않는데 밖으로 열려 있는 포트는 없습니다.")
+		return
+	}
+	if c.Mode == ModeAll {
+		g.logf("밖으로 열려 있던 포트 가운데 csa가 닫은 것입니다. 앱은 아직 듣고"+
+			" 있으므로 터널로는 닿습니다: %v", open)
+		return
+	}
+	g.logf("csa가 지키지 않는데 밖으로 열려 있는 포트입니다. peers.toml에 적지"+
+		" 않은 것은 csa가 닫지 않습니다: %v", open)
 }
 
 // Close는 걸어 둔 표를 지운다. 조직의 다른 규칙은 건드리지 않는다.

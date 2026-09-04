@@ -53,7 +53,7 @@ func TestFlowsDoNotGrowForever(t *testing.T) {
 // 되돌아오는 패킷을 알아보아야 한다. 정책은 연결을 여는 쪽만 보므로, 답을
 // 알아보지 못하면 TCP가 서지 않는다.
 func TestReplyOfAllowedFlow(t *testing.T) {
-	f := newFlows(connTTL, connMax)
+	f := newConns(connMax)
 	out := key(40000) // 10.91.0.2:40000 -> 10.91.0.1:8080
 	back := out.reverse()
 
@@ -101,5 +101,35 @@ func TestReplyKeepsFlowAlive(t *testing.T) {
 		if !f.IsReply(out.reverse()) {
 			t.Fatalf("오가는 중인데 잊었다: %d번째", i+1)
 		}
+	}
+}
+
+// UDP와 ICMP는 연결이 없다. TCP만큼 오래 기억하면 요청 하나가 그동안 되돌아오는
+// 패킷을 모두 들이게 된다.
+func TestConnTTLDependsOnProtocol(t *testing.T) {
+	if connTTL(protoTCP) <= connTTL(protoUDP) {
+		t.Error("TCP를 UDP보다 오래 기억해야 한다")
+	}
+	if connTTL(protoUDP) <= connTTL(1) {
+		t.Error("UDP를 ICMP보다 오래 기억해야 한다")
+	}
+}
+
+func TestConnsUsesProtocolTTL(t *testing.T) {
+	f := newConns(connMax)
+	udp := key(40000)
+	udp.proto = protoUDP
+	f.Allow(udp)
+	if !f.IsReply(udp.reverse()) {
+		t.Fatal("방금 들인 연결의 답을 알아보지 못했다")
+	}
+	// 시각을 UDP 수명보다 앞으로 돌린다. TCP 수명 안이지만 UDP는 지났다.
+	f.mu.Lock()
+	e := f.seen[udp]
+	e.at = time.Now().Add(-connTTL(protoUDP) - time.Second)
+	f.seen[udp] = e
+	f.mu.Unlock()
+	if f.IsReply(udp.reverse()) {
+		t.Error("UDP를 TCP만큼 오래 기억한다")
 	}
 }

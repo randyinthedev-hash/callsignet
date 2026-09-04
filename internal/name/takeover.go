@@ -65,7 +65,7 @@ func Detect(link, content string, hasResolvectl bool) Manager {
 // 없으면 어차피 연결하지 못하므로 그것이 맞는 동작이다.
 func ResolvConf(old, listenIP, domain string) string {
 	var b strings.Builder
-	b.WriteString("# Callsignet이 고쳤습니다. csa가 멈추면 되돌립니다.\n")
+	b.WriteString(Marker + "\n")
 	fmt.Fprintf(&b, "nameserver %s\n", listenIP)
 	for _, up := range upstreams(old) {
 		if up == listenIP {
@@ -84,6 +84,28 @@ func ResolvConf(old, listenIP, domain string) string {
 }
 
 // upstreams는 원래 파일에 적힌 리졸버 주소를 뽑아낸다.
+// Marker는 csa가 고친 파일임을 알리려고 첫 줄에 넣는 말이다.
+const Marker = "# Callsignet이 고쳤습니다. csa가 멈추면 되돌립니다."
+
+// Restore는 csa가 넣은 줄만 지운다. 파일 전체를 기동할 때의 내용으로 되쓰지
+// 않는 까닭이 있다. csa가 도는 동안 DHCP 클라이언트나 NetworkManager나 운영자가
+// 그 파일을 고칠 수 있고, 통째로 되쓰면 그 변경을 없앤다.
+func Restore(cur, listenIP, domain string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(cur, "\n") {
+		switch {
+		case line == Marker:
+			continue
+		case line == "nameserver "+listenIP:
+			continue
+		case line == "search "+domain:
+			continue
+		}
+		b.WriteString(line + "\n")
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
 func upstreams(content string) []string {
 	var out []string
 	for _, line := range strings.Split(content, "\n") {
