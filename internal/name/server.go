@@ -82,6 +82,33 @@ func (s *Server) startOne(listen string) error {
 	return nil
 }
 
+// note는 질의와 답을 적는다. 어떤 이름이 무엇으로 풀렸는지 남겨야, 앱이 상대를
+// 찾지 못할 때 어디서 막혔는지 운영자가 알 수 있다.
+func (s *Server) note(q dns.Question, m *dns.Msg) {
+	s.logf("이름 질의에 답했습니다. 이름 %s, 종류 %s, 답 %s",
+		strings.TrimSuffix(q.Name, "."), dns.TypeToString[q.Qtype], answerOf(m))
+}
+
+// answerOf는 답을 한 줄로 적는다. 거절하거나 없다고 답한 것도 그대로 적는다.
+func answerOf(m *dns.Msg) string {
+	if m.Rcode != dns.RcodeSuccess {
+		return dns.RcodeToString[m.Rcode]
+	}
+	var out []string
+	for _, rr := range m.Answer {
+		switch v := rr.(type) {
+		case *dns.A:
+			out = append(out, v.A.String())
+		case *dns.PTR:
+			out = append(out, strings.TrimSuffix(v.Ptr, "."))
+		}
+	}
+	if len(out) == 0 {
+		return "없음"
+	}
+	return strings.Join(out, ", ")
+}
+
 // SetTable은 이름 표를 갈아 끼운다. csa reload가 쓴다. 이미 열려 있는 리슨
 // 주소는 그대로 두고 답하는 내용만 바꾼다.
 func (s *Server) SetTable(t *Table) {
@@ -106,6 +133,7 @@ func (s *Server) handle(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 	q := r.Question[0]
+	defer func() { s.note(q, m) }()
 	t := s.table.Load()
 	switch q.Qtype {
 	case dns.TypeA:
