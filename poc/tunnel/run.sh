@@ -321,6 +321,73 @@ serve(9999)
       echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
     [ "$NAME_OK" = 1 ] || { echo "다만 이름 해석에 틀린 것이 있습니다."; exit 1; }
 
+
+    echo
+    echo "== 거절 응답"
+    # csa가 나가는 연결을 막을 때 앱에게 ICMP로 알린다. 앱이 연결 시간을 다
+    # 기다리지 않고 곧바로 실패를 보아야 한다. 조용히 버리면 그것을 확인할 수 없다.
+    if ! ip netns exec "$NS_A" python3 - "$WG_B" "$WG_C" <<'PYREJECT'
+import errno
+import socket
+import sys
+import time
+
+wg_b, wg_c = sys.argv[1], sys.argv[2]
+ok = True
+
+
+def check(cond, good, bad):
+    global ok
+    if cond:
+        print("  ok    " + good)
+    else:
+        print("  틀림  " + bad)
+        ok = False
+
+
+def dial(addr, port):
+    s = socket.socket()
+    s.settimeout(5)
+    t = time.monotonic()
+    try:
+        s.connect((addr, port))
+        return "연결됨", time.monotonic() - t
+    except TimeoutError:
+        return "시간초과", time.monotonic() - t
+    except OSError as e:
+        return errno.errorcode.get(e.errno, str(e.errno)), time.monotonic() - t
+    finally:
+        s.close()
+
+
+# 정책에 없는 상대다. csa가 막고 거절을 돌려준다.
+why, took = dial(wg_c, 8080)
+check(why == "EHOSTUNREACH",
+      "정책에 없는 상대에 붙으면 곧바로 실패한다",
+      "거절이 앱에게 닿지 않았다: %s" % why)
+check(took < 1.0,
+      "기다리지 않고 실패한다 (%.2f초)" % took,
+      "연결 시간을 다 기다렸다 (%.2f초)" % took)
+
+# 같은 상대인데 정책에 없는 포트다.
+why, took = dial(wg_b, 9090)
+check(why == "EHOSTUNREACH",
+      "정책에 없는 포트에 붙으면 곧바로 실패한다",
+      "거절이 앱에게 닿지 않았다: %s" % why)
+
+# 허가된 곳이다. 듣는 앱이 없으므로 상대 커널이 거절한다. csa의 거절과 달라야
+# 한다. 같으면 무엇 때문에 실패했는지 앱이 가릴 수 없다.
+why, took = dial(wg_b, 8080)
+check(why in ("ECONNREFUSED", "연결됨"),
+      "허가된 곳은 상대가 답한다 (%s)" % why,
+      "허가된 곳인데 csa가 막았다: %s" % why)
+
+sys.exit(0 if ok else 1)
+PYREJECT
+    then
+      echo "--- a의 로그 ---"; grep "막았습니다" "$WORK/a/csa.log" | tail -5 | sed 's/^/        /'
+      exit 1
+    fi
     echo
     echo "== 정책 집행"
     POL_OK=1

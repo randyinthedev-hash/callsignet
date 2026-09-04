@@ -213,7 +213,7 @@ func portName(p policy.Packet) string {
 // reject는 앱에게 거절을 알린다. 감싼 인터페이스에 바로 쓰므로 다시 걸러지지
 // 않는다.
 func (f *filter) reject(pkt []byte, d policy.Decision) {
-	icmp := policy.RejectICMP(pkt, f.rules.Load().SelfIP())
+	icmp := policy.RejectICMP(pkt)
 	if icmp == nil {
 		return
 	}

@@ -103,16 +103,13 @@ func TestICMPFollowsPolicy(t *testing.T) {
 	}
 }
 
-func TestPeerOfAndSelfIP(t *testing.T) {
+func TestPeerOf(t *testing.T) {
 	r := rules(t)
 	if id, ok := r.PeerOf(addr("10.91.0.2")); !ok || id != "srv-b" {
 		t.Fatalf("srv-b여야 하는데 %s %v", id, ok)
 	}
 	if _, ok := r.PeerOf(addr("10.91.0.9")); ok {
 		t.Fatal("모르는 터널 IP에 이름을 붙였다")
-	}
-	if r.SelfIP() != addr("10.91.0.1") {
-		t.Fatalf("이 머신의 터널 IP가 틀렸다: %s", r.SelfIP())
 	}
 }
 
