@@ -10,16 +10,18 @@ import (
 // Status는 csa status가 보여 주는 값이다. 도는 csa가 JSON으로 내고 csa status가
 // 읽어 표로 찍는다.
 type Status struct {
-	PeerID   string       `json:"peer-id"`
-	Iface    string       `json:"iface"`
-	TunnelIP string       `json:"tunnel-ip"`
-	Domain   string       `json:"domain"`
-	Resolver string       `json:"resolver"`
-	MTU      int          `json:"mtu"`
-	MaxMSS   uint16       `json:"max-mss"`
-	Clamped  uint64       `json:"mss-clamped"`
-	Since    time.Time    `json:"since"`
-	Peers    []PeerStatus `json:"peers"`
+	PeerID       string       `json:"peer-id"`
+	Iface        string       `json:"iface"`
+	TunnelIP     string       `json:"tunnel-ip"`
+	Domain       string       `json:"domain"`
+	Resolver     string       `json:"resolver"`
+	Guard        string       `json:"guard"`
+	GuardBlocked uint64       `json:"guard-blocked"`
+	MTU          int          `json:"mtu"`
+	MaxMSS       uint16       `json:"max-mss"`
+	Clamped      uint64       `json:"mss-clamped"`
+	Since        time.Time    `json:"since"`
+	Peers        []PeerStatus `json:"peers"`
 }
 
 // PeerStatus는 상대 하나의 상태다. Handshake가 비어 있으면 아직 한 번도 세션을
@@ -40,8 +42,10 @@ func Format(s Status, now time.Time) string {
 	fmt.Fprintf(&b, "csa %s가 돕니다. 기동한 지 %s 지났습니다.\n", s.PeerID, span(now.Sub(s.Since)))
 	fmt.Fprintf(&b, "인터페이스 %s, 터널 IP %s, 도메인 %s\n", s.Iface, s.TunnelIP, s.Domain)
 	fmt.Fprintf(&b, "이름 해석 관리 주체는 %s입니다.\n", s.Resolver)
-	fmt.Fprintf(&b, "MTU %d, TCP MSS 한도 %d바이트입니다. 지금까지 깎은 횟수 %d번입니다.\n\n",
+	fmt.Fprintf(&b, "MTU %d, TCP MSS 한도 %d바이트입니다. 지금까지 깎은 횟수 %d번입니다.\n",
 		s.MTU, s.MaxMSS, s.Clamped)
+	fmt.Fprintf(&b, "직통 경로는 %s입니다. 지금까지 막은 패킷 %d개입니다.\n\n",
+		s.Guard, s.GuardBlocked)
 
 	if len(s.Peers) == 0 {
 		b.WriteString("peers.toml에 다른 상대가 없습니다.\n")

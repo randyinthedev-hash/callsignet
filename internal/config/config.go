@@ -21,6 +21,18 @@ type Self struct {
 	ListenPort int    `toml:"listen-port"`
 	Tun        Tun    `toml:"tun"`
 	DNS        DNS    `toml:"dns"`
+	Guard      Guard  `toml:"guard"`
+}
+
+// Guard는 직통 경로를 어디까지 닫을지 정한다.
+//
+// mode가 services면 csa는 peers.toml에 적힌 이 머신의 서비스 포트만 닫는다.
+// all이면 아래 두 목록에 적은 포트 말고 모두 닫는다. off면 닫지 않는다.
+// 비워 두면 services다.
+type Guard struct {
+	Mode    string `toml:"mode"`
+	KeepTCP []int  `toml:"keep-tcp"`
+	KeepUDP []int  `toml:"keep-udp"`
 }
 
 type Tun struct {

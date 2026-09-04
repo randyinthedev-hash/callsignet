@@ -44,6 +44,7 @@ func (c *Config) checkSelf() []string {
 	if s.Tun.MTU != 0 && (s.Tun.MTU < 1280 || s.Tun.MTU > 1500) {
 		p = append(p, fmt.Sprintf("tun.mtu가 범위를 벗어났다: %d", s.Tun.MTU))
 	}
+	p = append(p, checkGuard(s.Guard)...)
 
 	cidr, err := netip.ParsePrefix(s.TunnelCIDR)
 	if err != nil {
@@ -55,6 +56,25 @@ func (c *Config) checkSelf() []string {
 		if cidr.Overlaps(local) {
 			p = append(p, fmt.Sprintf("tunnel-cidr가 이 머신이 이미 쓰는 대역과 겹친다: %s, %s", cidr, local))
 		}
+	}
+	return p
+}
+
+func checkGuard(g Guard) []string {
+	var p []string
+	switch g.Mode {
+	case "", "services", "all", "off":
+	default:
+		p = append(p, fmt.Sprintf("guard.mode는 services, all, off 가운데 하나여야 한다: %s", g.Mode))
+	}
+	for _, port := range append(append([]int{}, g.KeepTCP...), g.KeepUDP...) {
+		if port <= 0 || port > 65535 {
+			p = append(p, fmt.Sprintf("guard의 열어 둘 포트가 범위를 벗어났다: %d", port))
+		}
+	}
+	// 적어 두고 안 쓰이면 운영자가 열었다고 잘못 안다.
+	if g.Mode != "all" && (len(g.KeepTCP) > 0 || len(g.KeepUDP) > 0) {
+		p = append(p, "guard.keep-tcp와 guard.keep-udp는 guard.mode가 all일 때만 쓴다")
 	}
 	return p
 }

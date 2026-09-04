@@ -19,6 +19,7 @@ import (
 
 	"github.com/randyinthedev-hash/callsignet/internal/config"
 	"github.com/randyinthedev-hash/callsignet/internal/control"
+	"github.com/randyinthedev-hash/callsignet/internal/guard"
 	"github.com/randyinthedev-hash/callsignet/internal/name"
 	"github.com/randyinthedev-hash/callsignet/internal/wgdev"
 )
@@ -137,6 +138,12 @@ func runRun(args []string) error {
 		logf("이름 해석을 확인했습니다. %s가 %s로 풀립니다.", machine, self.TunnelIP)
 	}
 
+	gd := guard.New(logf)
+	if err := gd.Apply(guardConfig(cfg)); err != nil {
+		return err
+	}
+	defer gd.Close()
+
 	// live는 csa가 지금 따르고 있는 설정이다. csa reload가 갈아 끼운다.
 	var live atomic.Pointer[config.Config]
 	live.Store(cfg)
@@ -145,9 +152,9 @@ func runRun(args []string) error {
 	ctl, err := control.Listen(cfg.Self.PeerID, func(req string) (string, error) {
 		switch req {
 		case "status":
-			return statusJSON(live.Load(), dev, took, started)
+			return statusJSON(live.Load(), dev, took, gd, started)
 		case "reload":
-			return reload(*dir, &live, dev, dnsSrv, logf)
+			return reload(*dir, &live, dev, dnsSrv, gd, logf)
 		}
 		return "", fmt.Errorf("모르는 물음이다: %s", req)
 	})
@@ -167,7 +174,27 @@ func runRun(args []string) error {
 
 // statusJSON은 지금 상태를 모아 JSON으로 만든다. 설정에서 오는 값과 wg에게
 // 물은 값을 합친다. peers.toml에 있지만 아직 세션을 맺지 않은 상대도 넣는다.
-func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover, started time.Time) (string, error) {
+// guardConfig는 설정에서 직통 경로 규칙에 필요한 값을 뽑는다. 닫을 포트는
+// peers.toml에 적힌 이 머신의 서비스 포트다.
+func guardConfig(c *config.Config) guard.Config {
+	mode, _ := guard.ParseMode(c.Self.Guard.Mode) // 검사에서 이미 걸렀다
+	g := guard.Config{
+		Mode:    mode,
+		Iface:   c.Self.TunName(),
+		WGPort:  c.Self.ListenPort,
+		KeepTCP: c.Self.Guard.KeepTCP,
+		KeepUDP: c.Self.Guard.KeepUDP,
+	}
+	if self := c.Find(c.Self.PeerID); self != nil {
+		for _, svc := range self.Services {
+			g.Ports = append(g.Ports, svc.Port)
+		}
+	}
+	return g
+}
+
+func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover,
+	gd *guard.Guard, started time.Time) (string, error) {
 	self := cfg.Find(cfg.Self.PeerID)
 	st := control.Status{
 		PeerID:   cfg.Self.PeerID,
@@ -179,6 +206,9 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover, star
 		MaxMSS:   dev.MaxMSS(),
 		Clamped:  dev.MSSClamped(),
 		Since:    started,
+
+		Guard:        gd.Mode().String(),
+		GuardBlocked: gd.Blocked(),
 	}
 	live := dev.Status()
 	for _, p := range cfg.Peers {
@@ -214,7 +244,7 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover, star
 //
 // 검사에 걸린 설정도 걸지 않는다. csa는 앞서 읽은 설정 그대로 계속 돈다.
 func reload(dir string, live *atomic.Pointer[config.Config], dev *wgdev.Device,
-	dnsSrv *name.Server, logf func(string, ...any)) (string, error) {
+	dnsSrv *name.Server, gd *guard.Guard, logf func(string, ...any)) (string, error) {
 
 	cur, err := config.Load(dir)
 	if err != nil {
@@ -245,6 +275,10 @@ func reload(dir string, live *atomic.Pointer[config.Config], dev *wgdev.Device,
 		return "", err
 	}
 	dnsSrv.SetTable(table)
+	// 이 머신의 서비스 목록이 바뀌었으면 닫을 포트도 바뀐다.
+	if err := gd.Apply(guardConfig(cur)); err != nil {
+		return "", err
+	}
 	live.Store(cur)
 
 	report := reloadReport(ch)

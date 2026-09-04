@@ -73,6 +73,7 @@ func TestFormat(t *testing.T) {
 		PeerID: "srv-a", Iface: "cs0", TunnelIP: "10.91.0.1",
 		Domain: "cs.test.internal", Resolver: "직접 관리",
 		MTU: 1420, MaxMSS: 1380, Clamped: 3,
+		Guard: "서비스 포트만 닫음", GuardBlocked: 7,
 		Since: now.Add(-90 * time.Second),
 		Peers: []PeerStatus{
 			{PeerID: "srv-c", TunnelIP: "10.91.0.3"},
@@ -85,6 +86,7 @@ func TestFormat(t *testing.T) {
 		"csa srv-a가 돕니다. 기동한 지 1분 30초 지났습니다.",
 		"이름 해석 관리 주체는 직접 관리입니다.",
 		"MTU 1420, TCP MSS 한도 1380바이트입니다. 지금까지 깎은 횟수 3번입니다.",
+		"직통 경로는 서비스 포트만 닫음입니다. 지금까지 막은 패킷 7개입니다.",
 		"10.90.0.2:51820", "12초 전", "1.5 KiB", "512 B",
 	} {
 		if !strings.Contains(out, want) {

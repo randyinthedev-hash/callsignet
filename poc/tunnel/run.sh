@@ -7,9 +7,12 @@ set -euo pipefail
 
 NS_A=cs-a
 NS_B=cs-b
+# csa를 돌리지 않는 머신이다. peers.toml에도 정책에도 없다. 직통 경로를 재는 데 쓴다.
+NS_C=cs-c
 BR=cs-br0
 IP_A=10.90.0.10
 IP_B=10.90.0.30
+IP_C=10.90.0.50
 WG_A=10.91.0.1
 WG_B=10.91.0.2
 CIDR=10.91.0.0/24
@@ -30,8 +33,9 @@ cleanup() {
   sleep 0.3
   ip netns delete "$NS_A" 2>/dev/null || true
   ip netns delete "$NS_B" 2>/dev/null || true
+  ip netns delete "$NS_C" 2>/dev/null || true
   ip link delete "$BR" 2>/dev/null || true
-  rm -rf "/etc/netns/$NS_A" "/etc/netns/$NS_B"
+  rm -rf "/etc/netns/$NS_A" "/etc/netns/$NS_B" "/etc/netns/$NS_C"
 }
 trap cleanup EXIT
 cleanup
@@ -49,6 +53,7 @@ attach() { # ns addr
 }
 attach "$NS_A" "$IP_A"
 attach "$NS_B" "$IP_B"
+attach "$NS_C" "$IP_C"
 
 # 상위 리졸버만 적어 둔다. csa가 이 파일을 가져가 자기를 첫 줄에 넣어야 한다.
 # ip netns exec는 /etc/netns/<이름>/resolv.conf가 있으면 그것을 /etc/resolv.conf
@@ -254,6 +259,66 @@ c.close()
       printf '  ok    %s\n' "받는 쪽이 자기 답을 막지 않는다"
     fi
     [ "$TCP_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
+
+    echo
+    echo "== 직통 경로"
+    # csa를 돌리지 않는 머신 하나가 srv-b의 실제 IP로 붙어 본다. peers.toml에도
+    # 없고 정책에도 없는 머신이다. csa가 닫지 않으면 그대로 통한다.
+    DP_OK=1
+    # 앱은 0.0.0.0에 듣는다. 앱을 고치지 않고도 막히는지 보려는 것이다.
+    ip netns exec "$NS_B" python3 -c "
+import socket, threading
+
+def serve(port):
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('0.0.0.0', port))
+    s.listen(8)
+    while True:
+        c, _ = s.accept()
+        c.sendall(b'here\n')
+        c.close()
+
+threading.Thread(target=serve, args=(8080,), daemon=True).start()
+serve(9999)
+" & OPEN_PID=$!
+    sleep 1
+
+    knock_c() { # 주소 포트
+      ip netns exec "$NS_C" timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2; head -1 <&3" 2>/dev/null || true
+    }
+    if [ -z "$(knock_c "$IP_B" 8080)" ]; then
+      printf '  ok    %s\n' "csa 없는 머신이 실제 IP로 서비스 포트에 붙지 못한다"
+    else
+      printf '  틀림  %s\n' "실제 IP로 서비스 포트에 붙었다"; DP_OK=0
+    fi
+    if [ "$(knock_c "$IP_B" 9999)" = "here" ]; then
+      printf '  ok    %s\n' "peers.toml에 없는 포트는 막지 않는다"
+    else
+      printf '  틀림  %s\n' "적지 않은 포트까지 막았다"; DP_OK=0
+    fi
+    if [ "$(ip netns exec "$NS_A" timeout 3 bash -c \
+        "exec 3<>/dev/tcp/$APP_B.srv-b.cs.test.internal/8080; head -1 <&3" 2>/dev/null || true)" = "here" ]; then
+      printf '  ok    %s\n' "터널로 오는 연결은 그대로 지난다"
+    else
+      printf '  틀림  %s\n' "터널로 오는 연결까지 막았다"; DP_OK=0
+    fi
+    if ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1; then
+      printf '  ok    %s\n' "csa가 자기 표를 만들었다"
+    else
+      printf '  틀림  %s\n' "표가 없다"; DP_OK=0
+    fi
+    n=$("$CSA" status -c "$WORK/b" -json 2>/dev/null | sed -n 's/.*"guard-blocked":\([0-9]*\).*/\1/p')
+    if [ "${n:-0}" -gt 0 ]; then
+      printf '  ok    %s\n' "csa status가 막은 패킷을 센다 (${n}개)"
+    else
+      printf '  틀림  %s\n' "막은 패킷을 세지 않는다 (${n:-없음})"; DP_OK=0
+    fi
+    kill "$OPEN_PID" 2>/dev/null || true
+
+    [ "$DP_OK" = 1 ] || {
+      echo "--- b의 규칙 ---"; ip netns exec "$NS_B" nft list ruleset 2>&1 | sed 's/^/        /'
+      echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
     [ "$NAME_OK" = 1 ] || { echo "다만 이름 해석에 틀린 것이 있습니다."; exit 1; }
 
     echo
@@ -528,6 +593,14 @@ TOML
       echo "  틀림  멈춘 csa에 붙었다고 한다"; exit 1
     else
       echo "  ok    멈춘 뒤에는 csa status가 붙지 못한다고 알린다"
+    fi
+    kill "$PID_B" 2>/dev/null || true
+    sleep 1
+    if ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1; then
+      echo "  틀림  csa가 직통 경로 규칙을 남겼다"
+      ip netns exec "$NS_B" nft list ruleset | sed 's/^/        /'; exit 1
+    else
+      echo "  ok    csa가 멈추면서 직통 경로 규칙을 지웠다"
     fi
   else
     echo "이름으로는 통하지 않습니다."; exit 1
