@@ -135,34 +135,54 @@ echo "== VM 기동"
 # 이미 있다.
 #
 # 직렬 콘솔을 파일로 남긴다. 붙지 못했을 때 부팅이 어디서 멈췄는지 보려는 것이다.
+# 콘솔 로그를 libvirt의 자리에 남긴다. 홈 디렉터리에 두면 AppArmor가 qemu의
+# 쓰기를 막아 아무것도 남지 않는다.
+CONSOLE_DIR=/var/log/libvirt/qemu
 boot() { # 이름 mac
-  : > "$WORK/$1-console.log"
-  chmod 666 "$WORK/$1-console.log"
+  mkdir -p "$CONSOLE_DIR"
+  : > "$CONSOLE_DIR/$1-console.log"
   virt-install --name "$1" --memory 2048 --vcpus 2 --import \
     --disk "path=$POOL/$1.qcow2,format=qcow2,bus=virtio" \
     --disk "path=$POOL/$1-seed.iso,device=cdrom" \
     --network "network=$NET,mac=$2,model=virtio" \
     --osinfo detect=on,require=off \
-    --serial "file,path=$WORK/$1-console.log" \
+    --boot hd,cdrom \
+    --serial "file,path=$CONSOLE_DIR/$1-console.log" \
     --graphics none --noautoconsole >/dev/null
 }
 boot "$VM_A" "$MAC_A"
 boot "$VM_B" "$MAC_B"
 
 wait_ssh() { # 이름 주소
-  for i in $(seq 150); do
+  for i in $(seq 90); do
     if $SSH "root@$2" true 2>/dev/null; then
       echo "  $1에 붙었습니다. $((i * 2))초 걸렸습니다."
       return 0
     fi
+    if [ $((i % 15)) = 0 ]; then
+      echo "  $1을 기다립니다. $((i * 2))초 지났습니다. 지금 상태: $(virsh domstate "$1" 2>&1)"
+    fi
     sleep 2
   done
+  diagnose "$1" "$2"
+  return 1
+}
+
+# diagnose는 붙지 못했을 때 볼 것을 모아 찍는다. 무엇을 볼지 없어서 두 번
+# 헤맸다. 다른 VM의 로그도 함께 찍는다. 둘 다 비어 있으면 그 VM의 문제가
+# 아니라 로그를 남기는 방법의 문제다.
+diagnose() { # 이름 주소
   echo "  $1($2)에 붙지 못했습니다." >&2
+  echo "  --- 도메인 상태 ---" >&2
+  virsh list --all >&2 || true
   echo "  --- DHCP가 준 주소 ---" >&2
   virsh net-dhcp-leases "$NET" >&2 || true
-  echo "  --- 콘솔 마지막 40줄 ---" >&2
-  tail -40 "$WORK/$1-console.log" >&2 || true
-  return 1
+  for vm in "$VM_A" "$VM_B"; do
+    echo "  --- $vm 콘솔 ($(wc -c < "$CONSOLE_DIR/$vm-console.log" 2>/dev/null || echo 0)바이트) ---" >&2
+    tail -30 "$CONSOLE_DIR/$vm-console.log" 2>/dev/null >&2 || echo "    로그가 없습니다" >&2
+  done
+  echo "  --- $1의 디스크와 직렬 포트 ---" >&2
+  virsh dumpxml "$1" 2>/dev/null | sed -n "/<disk/,/<\/disk>/p;/<serial/,/<\/serial>/p" >&2 || true
 }
 echo "  붙기를 기다립니다. 두 머신이 뜨는 데 1분쯤 걸립니다."
 wait_ssh "$VM_A" "$IP_A"
