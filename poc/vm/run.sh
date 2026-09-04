@@ -74,16 +74,31 @@ PUB=$(cat "$WORK/id.pub")
 SSH="ssh -q -i $WORK/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5"
 SCP="scp -q -i $WORK/id -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
+# root로 붙는다. csa가 어차피 root 권한이 필요하기 때문이다.
+#
+# 키를 users 항목이 아니라 write_files로 심는 까닭이 있다. RHEL 계열 이미지는
+# cloud-init의 users로 root를 다루지 않는다. SELinux 문맥도 다시 잡아야 한다.
+# 그러지 않으면 sshd가 키 파일을 읽지 못한다. sshd 설정은 앞에 오는 이름으로
+# 드롭인을 넣어 cloud-init이 넣는 것보다 먼저 읽히게 한다.
 seed() { # 이름 바탕이미지 추가명령
   cat > "$WORK/$1-user-data" <<CLOUD
 #cloud-config
 hostname: $1
 disable_root: false
-users:
-  - name: root
-    ssh_authorized_keys:
-      - $PUB
+write_files:
+  - path: /root/.ssh/authorized_keys
+    permissions: "0600"
+    owner: "root:root"
+    content: |
+      $PUB
+  - path: /etc/ssh/sshd_config.d/00-csn.conf
+    permissions: "0644"
+    content: |
+      PermitRootLogin prohibit-password
 runcmd:
+  - [ sh, -c, "chmod 700 /root/.ssh" ]
+  - [ sh, -c, "restorecon -R /root/.ssh /etc/ssh 2>/dev/null || true" ]
+  - [ sh, -c, "systemctl restart sshd 2>/dev/null || systemctl restart ssh" ]
   - [ sh, -c, "$3" ]
 CLOUD
   printf 'instance-id: %s\nlocal-hostname: %s\n' "$1" "$1" > "$WORK/$1-meta-data"
@@ -113,29 +128,39 @@ virsh net-define "$WORK/net.xml" >/dev/null
 virsh net-start "$NET" >/dev/null
 
 echo "== VM 기동"
+# 직렬 콘솔을 파일로 남긴다. 붙지 못했을 때 부팅이 어디서 멈췄는지 보려는 것이다.
 boot() { # 이름 mac
+  : > "$WORK/$1-console.log"
+  chmod 666 "$WORK/$1-console.log"
   virt-install --name "$1" --memory 2048 --vcpus 2 --import \
     --disk "path=$POOL/$1.qcow2,format=qcow2" \
     --disk "path=$POOL/$1-seed.iso,device=cdrom" \
     --network "network=$NET,mac=$2" \
     --osinfo detect=on,require=off \
+    --serial "file,path=$WORK/$1-console.log" \
     --graphics none --noautoconsole >/dev/null
 }
 boot "$VM_A" "$MAC_A"
 boot "$VM_B" "$MAC_B"
 
-wait_ssh() { # 주소
-  for _ in $(seq 120); do
-    if $SSH "root@$1" true 2>/dev/null; then return 0; fi
+wait_ssh() { # 이름 주소
+  for i in $(seq 150); do
+    if $SSH "root@$2" true 2>/dev/null; then
+      echo "  $1에 붙었습니다. $((i * 2))초 걸렸습니다."
+      return 0
+    fi
     sleep 2
   done
-  echo "  $1에 붙지 못했습니다." >&2
+  echo "  $1($2)에 붙지 못했습니다." >&2
+  echo "  --- DHCP가 준 주소 ---" >&2
+  virsh net-dhcp-leases "$NET" >&2 || true
+  echo "  --- 콘솔 마지막 40줄 ---" >&2
+  tail -40 "$WORK/$1-console.log" >&2 || true
   return 1
 }
 echo "  붙기를 기다립니다. 두 머신이 뜨는 데 1분쯤 걸립니다."
-wait_ssh "$IP_A"
-wait_ssh "$IP_B"
-echo "  붙었습니다."
+wait_ssh "$VM_A" "$IP_A"
+wait_ssh "$VM_B" "$IP_B"
 
 echo "== 키와 설정"
 PUB_A=$("$CSA" genkey -o "$WORK/a.key" | sed -n 's/^공개키: //p')
