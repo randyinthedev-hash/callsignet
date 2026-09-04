@@ -29,7 +29,7 @@ func (c Changes) Any() bool {
 // Diff는 두 설정을 견준다. peer는 peer-id로 짝을 맞춘다.
 func Diff(old, cur *Config) Changes {
 	var c Changes
-	c.SelfChanged = old.Self != cur.Self
+	c.SelfChanged = !sameSelf(old.Self, cur.Self)
 	c.PolicyChanged = !samePolicy(old.Policy, cur.Policy)
 
 	oldByID := byID(old.Peers)
@@ -60,6 +60,29 @@ func Diff(old, cur *Config) Changes {
 	sort.Strings(c.RemovedPeers)
 	sort.Strings(c.ChangedPeers)
 	return c
+}
+
+// sameSelf는 csa.toml에서 온 값이 같은지 본다. Guard가 슬라이스를 담고 있어
+// 구조체끼리 그냥 견줄 수 없다.
+func sameSelf(a, b Self) bool {
+	if a.PeerID != b.PeerID || a.PrivateKey != b.PrivateKey || a.Domain != b.Domain ||
+		a.TunnelCIDR != b.TunnelCIDR || a.ListenPort != b.ListenPort ||
+		a.Tun != b.Tun || a.DNS != b.DNS || a.Guard.Mode != b.Guard.Mode {
+		return false
+	}
+	return sameInts(a.Guard.KeepTCP, b.Guard.KeepTCP) && sameInts(a.Guard.KeepUDP, b.Guard.KeepUDP)
+}
+
+func sameInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func byID(peers []Peer) map[string]Peer {
