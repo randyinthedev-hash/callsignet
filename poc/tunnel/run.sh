@@ -32,6 +32,7 @@ if [ ! -x "$CSA" ]; then echo "csa를 먼저 만드십시오: make build" >&2; e
 cleanup() {
   [ -n "${PID_A:-}" ] && kill "$PID_A" 2>/dev/null || true
   [ -n "${PID_B:-}" ] && kill "$PID_B" 2>/dev/null || true
+  [ -n "${PID_B2:-}" ] && kill "$PID_B2" 2>/dev/null || true
   sleep 0.3
   ip netns delete "$NS_A" 2>/dev/null || true
   ip netns delete "$NS_B" 2>/dev/null || true
@@ -728,6 +729,76 @@ for p in st['peers']:
     else
       echo "  ok    csa가 멈추면서 직통 경로 규칙을 지웠다"
     fi
+
+    echo
+    echo "== 문 하나 모드"
+    # 앞 절에서 csa 둘을 멈췄다. srv-b의 csa를 다른 모드로 다시 띄운다.
+    # 이 모드는 csa.toml에서 정하므로 csa reload로는 바꿀 수 없다.
+    OD_OK=1
+    cat >> "$WORK/b/csa.toml" <<TOML
+
+[guard]
+mode     = "all"
+keep-tcp = [9999]
+TOML
+    ip netns exec "$NS_B" env CSA_DEBUG="$CSA_DEBUG" "$CSA" run -c "$WORK/b" \
+      > "$WORK/b/csa2.log" 2>&1 & PID_B2=$!
+    for _ in $(seq 20); do
+      grep -q "직통 경로를 닫았습니다" "$WORK/b/csa2.log" && break
+      sleep 0.3
+    done
+
+    # 세 포트에 모두 듣게 해 둔다. 앱을 고치지 않고도 갈리는지 보려는 것이다.
+    ip netns exec "$NS_B" python3 -c "
+import socket, threading
+
+def serve(port):
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('0.0.0.0', port))
+    s.listen(8)
+    while True:
+        c, _ = s.accept()
+        c.sendall(b'here\n')
+        c.close()
+
+for p in (8080, 7777):
+    threading.Thread(target=serve, args=(p,), daemon=True).start()
+serve(9999)
+" & OD_PID=$!
+    sleep 1
+
+    if [ -z "$(knock_c "$IP_B" 8080)" ]; then
+      printf '  ok    %s\n' "서비스 포트를 막는다"
+    else
+      printf '  틀림  %s\n' "서비스 포트가 열려 있다"; OD_OK=0
+    fi
+    if [ -z "$(knock_c "$IP_B" 7777)" ]; then
+      printf '  ok    %s\n' "예외에 없는 포트도 막는다"
+    else
+      printf '  틀림  %s\n' "예외에 없는 포트가 열려 있다"; OD_OK=0
+    fi
+    if [ "$(knock_c "$IP_B" 9999)" = "here" ]; then
+      printf '  ok    %s\n' "예외로 적은 포트는 연다"
+    else
+      printf '  틀림  %s\n' "예외로 적은 포트가 막혔다"; OD_OK=0
+    fi
+    if ip netns exec "$NS_C" ping -c 1 -W 2 "$IP_B" >/dev/null 2>&1; then
+      printf '  ok    %s\n' "ICMP는 연다"
+    else
+      printf '  틀림  %s\n' "ICMP까지 막았다. 경로 MTU 발견이 되지 않는다"; OD_OK=0
+    fi
+    kill "$OD_PID" 2>/dev/null || true
+    kill "$PID_B2" 2>/dev/null || true
+    sleep 1
+    if ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1; then
+      printf '  틀림  %s\n' "멈추면서 규칙을 남겼다"; OD_OK=0
+    else
+      printf '  ok    %s\n' "멈추면서 규칙을 지웠다"
+    fi
+
+    [ "$OD_OK" = 1 ] || { echo "--- b의 규칙 ---"; ip netns exec "$NS_B" nft list ruleset 2>&1 | sed 's/^/        /'
+                          echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa2.log"; exit 1; }
   else
     echo "이름으로는 통하지 않습니다."; exit 1
   fi
