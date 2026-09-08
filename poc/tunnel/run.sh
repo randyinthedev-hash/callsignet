@@ -87,9 +87,14 @@ PUB_C=$("$CSA" genkey -o "$WORK/c-unused.key" | sed -n 's/^공개키: //p')
 
 # 사전 공유키는 짝마다 하나다. 두 머신에 상대의 peer-id로 이름 붙여 같은 내용을
 # 둔다. srv-a에는 psk/srv-b.key가, srv-b에는 psk/srv-a.key가 놓인다.
+#
+# srv-c의 키도 만든다. 정책에 없는 상대이지만 peers.toml에 있으므로 csa가 wg에
+# 건다. mode가 required이면 그런 상대에게도 키가 있어야 한다.
 mkdir -p "$WORK/a/psk" "$WORK/b/psk"
 "$CSA" genpsk -o "$WORK/a/psk/srv-b.key" >/dev/null
 cp "$WORK/a/psk/srv-b.key" "$WORK/b/psk/srv-a.key"
+"$CSA" genpsk -o "$WORK/a/psk/srv-c.key" >/dev/null
+"$CSA" genpsk -o "$WORK/b/psk/srv-c.key" >/dev/null
 
 # 두 머신에 서로 다른 앱을 둔다. 이름 해석이 앱마다 다른 답을 내는지 보려는 것이다.
 APP_A=billing
@@ -536,6 +541,7 @@ PYCHECK
 
     # 상대를 더하면 이름 표도 함께 바뀐다.
     PUB_D=$("$CSA" genkey -o "$WORK/d-unused.key" | sed -n 's/^공개키: //p')
+    "$CSA" genpsk -o "$WORK/a/psk/srv-d.key" >/dev/null
     printf '\n[[peer]]\npeer-id    = "srv-d"\npublic-key = "%s"\ntunnel-ip  = "10.91.0.4"\nendpoints  = ["10.90.0.98:%s"]\nservices   = [{ app = "ledger", port = 8080 }]\n' \
       "$PUB_D" "$PORT" >> "$WORK/a/peers.toml"
     out=$("$CSA" reload -c "$WORK/a" 2>&1 || true)
