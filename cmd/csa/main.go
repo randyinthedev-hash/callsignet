@@ -24,6 +24,10 @@ import (
 	"github.com/randyinthedev-hash/callsignet/internal/wgdev"
 )
 
+// Version은 이 csa의 판이다. 설정 파일의 모양과 csa status가 내놓는 값이 판마다
+// 달라질 수 있으므로, 다른 프로그램이 csa를 부릴 때 이 값을 보고 맞춘다.
+const Version = "0.1.0"
+
 const usage = `csa — Callsignet agent
 
 사용법: csa <명령> [옵션]
@@ -31,6 +35,7 @@ const usage = `csa — Callsignet agent
   check    설정을 읽고 검사한다
   genkey   정적 키쌍을 만든다
   genpsk   사전 공유키를 만든다
+  version  이 csa의 판을 찍는다
   run      설정을 읽고 TUN 인터페이스를 만들고 돈다
   status   지금 붙어 있는 상대를 보여 준다
   reload   도는 중에 설정을 다시 읽는다
@@ -50,6 +55,8 @@ func main() {
 		err = runGenkey(args)
 	case "genpsk":
 		err = runGenpsk(args)
+	case "version":
+		fmt.Println(Version)
 	case "run":
 		err = runRun(args)
 	case "status":
