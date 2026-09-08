@@ -55,10 +55,16 @@ type snapshot struct {
 	pubOf map[string]string
 	// known은 등록된 상대의 접속 주소다. 낯선 곳을 가릴 때 쓴다.
 	known map[string]bool
+	// psk는 상대마다 쓰는 사전 공유키다. 없는 상대는 빠져 있다.
+	psk map[string]string
 }
 
-func newSnapshot(c *config.Config) *snapshot {
-	s := &snapshot{cfg: c, pubOf: map[string]string{}, known: map[string]bool{}}
+func newSnapshot(c *config.Config) (*snapshot, error) {
+	psk, err := c.LoadPSKs()
+	if err != nil {
+		return nil, err
+	}
+	s := &snapshot{cfg: c, pubOf: map[string]string{}, known: map[string]bool{}, psk: psk}
 	for _, peer := range c.Peers {
 		if peer.PeerID == c.Self.PeerID {
 			continue
@@ -70,7 +76,7 @@ func newSnapshot(c *config.Config) *snapshot {
 			s.known[ep] = true
 		}
 	}
-	return s
+	return s, nil
 }
 
 // Open은 TUN 인터페이스를 만들고, 터널 IP와 경로와 MTU를 걸고, wg를 시작한다.
@@ -84,7 +90,11 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 	if err != nil {
 		return nil, err
 	}
-	uapi, err := UAPIConfig(c, privB64)
+	snap, err := newSnapshot(c)
+	if err != nil {
+		return nil, err
+	}
+	uapi, err := UAPIConfig(c, privB64, snap.psk)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +118,6 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 	}
 	// 감싸서 정책을 집행한다. wg가 읽는 자리가 나가는 쪽이고 쓰는 자리가 받는 쪽이다.
 	out := &Device{Name: real, logf: logf}
-	snap := newSnapshot(c)
 	out.snap.Store(snap)
 	t := &filter{
 		Device: raw, logf: logf, observe: out.endpointOf,
@@ -197,7 +206,12 @@ func checkUnderlayMTU(c *config.Config, mtu int, logf func(string, ...any)) {
 // 먼저 만들어 두고 wg를 건드리는 까닭은, 규칙을 만들다 실패하면 아무것도 바꾸지
 // 않은 채로 돌아가게 하려는 것이다.
 func (d *Device) Reload(c *config.Config) error {
-	uapi, err := UAPIReload(d.snap.Load().cfg, c)
+	snap, err := newSnapshot(c)
+	if err != nil {
+		return err
+	}
+	was := d.snap.Load()
+	uapi, err := UAPIReload(was.cfg, c, was.psk, snap.psk)
 	if err != nil {
 		return err
 	}
@@ -210,7 +224,6 @@ func (d *Device) Reload(c *config.Config) error {
 			return fmt.Errorf("wg 설정을 다시 걸지 못했다: %w", err)
 		}
 	}
-	snap := newSnapshot(c)
 	d.flt.rules.Store(rules)
 	d.bnd.setKnown(snap.known)
 	d.snap.Store(snap)
@@ -280,6 +293,12 @@ func (d *Device) Status() map[string]PeerStatus {
 		}
 	}
 	return out
+}
+
+// HasPSK는 그 상대와 사전 공유키를 쓰고 있는지 알려 준다.
+func (d *Device) HasPSK(peerID string) bool {
+	_, ok := d.snap.Load().psk[peerID]
+	return ok
 }
 
 // MaxMSS는 이 터널이 나를 수 있는 TCP 세그먼트 크기다.

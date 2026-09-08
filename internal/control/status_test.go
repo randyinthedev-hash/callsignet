@@ -78,7 +78,7 @@ func TestFormat(t *testing.T) {
 		Peers: []PeerStatus{
 			{PeerID: "srv-c", TunnelIP: "10.91.0.3"},
 			{PeerID: "srv-b", TunnelIP: "10.91.0.2", Endpoint: "10.90.0.2:51820",
-				Handshake: now.Add(-12 * time.Second), RxBytes: 1536, TxBytes: 512},
+				Handshake: now.Add(-12 * time.Second), RxBytes: 1536, TxBytes: 512, PSK: true},
 		},
 	}
 	out := Format(s, now)
@@ -87,7 +87,7 @@ func TestFormat(t *testing.T) {
 		"이름 해석 관리 주체는 직접 관리입니다.",
 		"MTU 1420, TCP MSS 한도 1380바이트입니다. 지금까지 깎은 횟수 3번입니다.",
 		"직통 경로는 서비스 포트만 닫음입니다. 지금까지 막은 패킷 7개입니다.",
-		"10.90.0.2:51820", "12초 전", "1.5 KiB", "512 B",
+		"10.90.0.2:51820", "12초 전", "1.5 KiB", "512 B", "있음",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("없다: %q\n%s", want, out)

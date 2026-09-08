@@ -23,6 +23,7 @@ make test      # 시험을 돌린다
 |---|---|
 | `csa check -c <디렉터리>` | 설정을 읽고 검사한다 |
 | `csa genkey -o <파일>` | 정적 키쌍을 만든다 |
+| `csa genpsk -o <파일>` | 사전 공유키를 만든다 |
 | `csa run -c <디렉터리>` | TUN 인터페이스를 만들고 돈다 |
 | `csa status -c <디렉터리>` | 도는 csa의 상태와 상대들을 보여 준다 |
 | `csa reload -c <디렉터리>` | 도는 csa에게 설정을 다시 읽으라고 이른다 |

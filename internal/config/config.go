@@ -6,8 +6,11 @@
 package config
 
 import (
+	"encoding/base64"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 )
@@ -22,6 +25,21 @@ type Self struct {
 	Tun        Tun    `toml:"tun"`
 	DNS        DNS    `toml:"dns"`
 	Guard      Guard  `toml:"guard"`
+	PSK        PSK    `toml:"psk"`
+}
+
+// PSK는 사전 공유키를 어디서 읽고 반드시 있어야 하는지를 정한다.
+//
+// wg는 상대마다 사전 공유키를 하나 받아 handshake에 섞는다. Curve25519가 뒷날
+// 깨져도 그 키가 새지 않았으면 지난 세션의 비밀이 지켜진다. 지금 모아 두었다가
+// 뒷날 푸는 공격에 대비하는 것이다.
+//
+// 키를 peers.toml에 적지 않고 디렉터리에 둔다. 파일 이름이 상대의 peer-id다.
+// 키는 짝마다 하나인데 peers.toml은 모든 머신에서 같은 파일이므로, 거기 적으면
+// 같은 항목이 머신마다 다른 짝을 가리키게 된다.
+type PSK struct {
+	Dir  string `toml:"dir"`
+	Mode string `toml:"mode"`
 }
 
 // Guard는 직통 경로를 어디까지 닫을지 정한다.
@@ -123,6 +141,52 @@ func Load(dir string) (*Config, error) {
 		return nil, fmt.Errorf("policy.toml을 읽지 못했다: %w", err)
 	}
 	return &c, nil
+}
+
+// PSKPath는 그 상대와 쓰는 사전 공유키 파일의 자리다. 디렉터리를 적지 않았으면
+// 빈 문자열을 돌려준다.
+func (c *Config) PSKPath(peerID string) string {
+	if c.Self.PSK.Dir == "" || peerID == c.Self.PeerID {
+		return ""
+	}
+	return filepath.Join(c.Self.PSK.Dir, peerID+".key")
+}
+
+// LoadPSK는 그 상대와 쓰는 사전 공유키를 읽는다. 파일이 없으면 두 번째 값이
+// 거짓이다. 없는 것 자체는 잘못이 아니다. 반드시 있어야 하는지는 psk.mode가 정한다.
+func (c *Config) LoadPSK(peerID string) (string, bool, error) {
+	path := c.PSKPath(peerID)
+	if path == "" {
+		return "", false, nil
+	}
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("사전 공유키를 읽지 못했다: %s: %w", path, err)
+	}
+	key := strings.TrimSpace(string(b))
+	raw, err := base64.StdEncoding.DecodeString(key)
+	if err != nil || len(raw) != 32 {
+		return "", true, fmt.Errorf("사전 공유키가 32바이트 base64가 아니다: %s", path)
+	}
+	return key, true, nil
+}
+
+// LoadPSKs는 모든 상대의 사전 공유키를 읽는다. 없는 상대는 빠진다.
+func (c *Config) LoadPSKs() (map[string]string, error) {
+	out := map[string]string{}
+	for _, peer := range c.Peers {
+		key, ok, err := c.LoadPSK(peer.PeerID)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out[peer.PeerID] = key
+		}
+	}
+	return out, nil
 }
 
 // Find는 peer-id로 peer 항목을 찾는다.

@@ -13,7 +13,7 @@ const keyC = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
 // 바뀌지 않았으면 wg에 한 줄도 걸지 않아야 한다. 다시 걸면 wg가 들고 있던
 // 관측한 접속 주소를 설정에 적힌 값으로 되돌린다.
 func TestUAPIReloadSaysNothingWhenNothingChanged(t *testing.T) {
-	got, err := UAPIReload(sample(), sample())
+	got, err := UAPIReload(sample(), sample(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestUAPIReloadAddsPeer(t *testing.T) {
 		PeerID: "srv-c", PublicKey: keyC, TunnelIP: "10.91.0.3",
 		Endpoints: []string{"10.0.5.3:51820"},
 	})
-	got, err := UAPIReload(sample(), cur)
+	got, err := UAPIReload(sample(), cur, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestUAPIReloadAddsPeer(t *testing.T) {
 func TestUAPIReloadRemovesPeer(t *testing.T) {
 	cur := sample()
 	cur.Peers = cur.Peers[:1] // srv-b를 뺀다
-	got, err := UAPIReload(sample(), cur)
+	got, err := UAPIReload(sample(), cur, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestUAPIReloadRemovesPeer(t *testing.T) {
 func TestUAPIReloadUpdatesEndpoint(t *testing.T) {
 	cur := sample()
 	cur.Peers[1].Endpoints = []string{"10.0.5.99:51820"}
-	got, err := UAPIReload(sample(), cur)
+	got, err := UAPIReload(sample(), cur, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestUAPIReloadUpdatesEndpoint(t *testing.T) {
 func TestUAPIReloadReplacesPeerWhenKeyChanged(t *testing.T) {
 	cur := sample()
 	cur.Peers[1].PublicKey = keyC
-	got, err := UAPIReload(sample(), cur)
+	got, err := UAPIReload(sample(), cur, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestUAPIReloadReplacesPeerWhenKeyChanged(t *testing.T) {
 func TestUAPIReloadSkipsSelf(t *testing.T) {
 	cur := sample()
 	cur.Peers[0].Endpoints = []string{"10.0.5.77:51820"}
-	got, err := UAPIReload(sample(), cur)
+	got, err := UAPIReload(sample(), cur, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestUAPIReloadSkipsSelf(t *testing.T) {
 func TestUAPIReloadRejectsBadKey(t *testing.T) {
 	cur := sample()
 	cur.Peers[1].PublicKey = "짧다"
-	if _, err := UAPIReload(sample(), cur); err == nil {
+	if _, err := UAPIReload(sample(), cur, nil, nil); err == nil {
 		t.Error("길이가 틀린 키는 거부해야 한다")
 	}
 }

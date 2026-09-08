@@ -17,7 +17,7 @@ const KeepaliveSeconds = 25
 
 // UAPIConfig는 wireguard-go가 읽는 설정 문자열을 만든다. 키는 base64가 아니라
 // 16진수로 적어야 한다.
-func UAPIConfig(c *config.Config, privateKeyB64 string) (string, error) {
+func UAPIConfig(c *config.Config, privateKeyB64 string, psk map[string]string) (string, error) {
 	priv, err := keyToHex(privateKeyB64)
 	if err != nil {
 		return "", fmt.Errorf("개인키를 읽을 수 없다: %w", err)
@@ -41,12 +41,30 @@ func UAPIConfig(c *config.Config, privateKeyB64 string) (string, error) {
 		// 허용 IP는 그 상대에게 배정된 터널 IP 하나뿐이다. 이 값이 받는 쪽에서
 		// 상대를 확정하는 근거가 된다.
 		fmt.Fprintf(&b, "allowed_ip=%s/32\n", peer.TunnelIP)
+		if err := writePSK(&b, psk[peer.PeerID], peer.PeerID); err != nil {
+			return "", err
+		}
 		if len(peer.Endpoints) > 0 {
 			fmt.Fprintf(&b, "endpoint=%s\n", peer.Endpoints[0])
 		}
 		fmt.Fprintf(&b, "persistent_keepalive_interval=%d\n", KeepaliveSeconds)
 	}
 	return b.String(), nil
+}
+
+// writePSK는 그 상대의 사전 공유키를 적는다. 키가 없으면 아무것도 적지 않는다.
+// wg는 사전 공유키를 적지 않은 상대에게는 0으로 채운 값을 쓰고, 그것은 이
+// 기능을 끈 것과 같다.
+func writePSK(b *strings.Builder, keyB64, peerID string) error {
+	if keyB64 == "" {
+		return nil
+	}
+	hex, err := keyToHex(keyB64)
+	if err != nil {
+		return fmt.Errorf("사전 공유키를 읽을 수 없다: %s의 것", peerID)
+	}
+	fmt.Fprintf(b, "preshared_key=%s\n", hex)
+	return nil
 }
 
 func keyToHex(b64 string) (string, error) {
@@ -68,7 +86,7 @@ func keyToHex(b64 string) (string, error) {
 // 자리로 옮겨 갔으면 그 자리를 잃는다.
 //
 // 공개키가 바뀐 상대는 wg에게 다른 상대다. 옛 키를 지우고 새 키를 넣는다.
-func UAPIReload(old, cur *config.Config) (string, error) {
+func UAPIReload(old, cur *config.Config, oldPSK, curPSK map[string]string) (string, error) {
 	oldByID := peersByID(old)
 	curByID := peersByID(cur)
 
@@ -93,7 +111,7 @@ func UAPIReload(old, cur *config.Config) (string, error) {
 		p := curByID[id]
 		o, had := oldByID[id]
 		if had && o.PublicKey == p.PublicKey && o.TunnelIP == p.TunnelIP &&
-			sameEndpoint(o.Endpoints, p.Endpoints) {
+			sameEndpoint(o.Endpoints, p.Endpoints) && oldPSK[id] == curPSK[id] {
 			continue
 		}
 		pub, err := keyToHex(p.PublicKey)
@@ -108,6 +126,9 @@ func UAPIReload(old, cur *config.Config) (string, error) {
 		fmt.Fprintf(&add, "public_key=%s\n", pub)
 		add.WriteString("replace_allowed_ips=true\n")
 		fmt.Fprintf(&add, "allowed_ip=%s/32\n", p.TunnelIP)
+		if err := writePSK(&add, curPSK[id], id); err != nil {
+			return "", err
+		}
 		if len(p.Endpoints) > 0 {
 			fmt.Fprintf(&add, "endpoint=%s\n", p.Endpoints[0])
 		}

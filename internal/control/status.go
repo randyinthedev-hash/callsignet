@@ -33,6 +33,8 @@ type PeerStatus struct {
 	Handshake time.Time `json:"handshake"`
 	RxBytes   int64     `json:"rx-bytes"`
 	TxBytes   int64     `json:"tx-bytes"`
+	// PSK는 그 상대와 사전 공유키를 쓰고 있는지다.
+	PSK bool `json:"psk"`
 }
 
 // Format은 상태를 사람이 읽을 표로 만든다. now를 받는 것은 시험이 시각을
@@ -55,15 +57,22 @@ func Format(s Status, now time.Time) string {
 	peers := append([]PeerStatus(nil), s.Peers...)
 	sort.Slice(peers, func(i, j int) bool { return peers[i].PeerID < peers[j].PeerID })
 
-	rows := [][]string{{"peer", "터널 IP", "관측한 출발지", "마지막 handshake", "받음", "보냄"}}
+	rows := [][]string{{"peer", "터널 IP", "관측한 출발지", "마지막 handshake", "받음", "보냄", "사전 공유키"}}
 	for _, p := range peers {
 		rows = append(rows, []string{
 			p.PeerID, p.TunnelIP, dash(p.Endpoint), when(p.Handshake, now),
-			size(p.RxBytes), size(p.TxBytes),
+			size(p.RxBytes), size(p.TxBytes), yesNo(p.PSK),
 		})
 	}
 	b.WriteString(table(rows))
 	return b.String()
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "있음"
+	}
+	return "없음"
 }
 
 func dash(s string) string {

@@ -19,6 +19,7 @@ func (c *Config) Validate() []string {
 	p = append(p, c.checkPeers()...)
 	p = append(p, c.checkPolicy()...)
 	p = append(p, c.checkKeyPair()...)
+	p = append(p, c.checkPSK()...)
 	return p
 }
 
@@ -245,6 +246,36 @@ func (c *Config) checkKeyPair() []string {
 			" 개인키에서 나온 값 %s, peers.toml에 적힌 값 %s", got, self.PublicKey)}
 	}
 	return nil
+}
+
+// checkPSK는 사전 공유키 설정을 본다.
+func (c *Config) checkPSK() []string {
+	var p []string
+	switch c.Self.PSK.Mode {
+	case "", "optional", "required":
+	default:
+		p = append(p, fmt.Sprintf("psk.mode는 optional과 required 가운데 하나여야 한다: %s", c.Self.PSK.Mode))
+	}
+	if c.Self.PSK.Mode == "required" && c.Self.PSK.Dir == "" {
+		return append(p, "psk.mode가 required인데 psk.dir가 없다")
+	}
+	if c.Self.PSK.Dir == "" {
+		return p
+	}
+	for _, peer := range c.Peers {
+		if peer.PeerID == c.Self.PeerID {
+			continue
+		}
+		_, ok, err := c.LoadPSK(peer.PeerID)
+		if err != nil {
+			p = append(p, err.Error())
+			continue
+		}
+		if !ok && c.Self.PSK.Mode == "required" {
+			p = append(p, fmt.Sprintf("psk.mode가 required인데 사전 공유키가 없다: %s", c.PSKPath(peer.PeerID)))
+		}
+	}
+	return p
 }
 
 func hasApp(svcs []Service, app string) bool {

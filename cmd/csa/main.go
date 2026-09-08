@@ -30,6 +30,7 @@ const usage = `csa — Callsignet agent
 
   check    설정을 읽고 검사한다
   genkey   정적 키쌍을 만든다
+  genpsk   사전 공유키를 만든다
   run      설정을 읽고 TUN 인터페이스를 만들고 돈다
   status   지금 붙어 있는 상대를 보여 준다
   reload   도는 중에 설정을 다시 읽는다
@@ -47,6 +48,8 @@ func main() {
 		err = runCheck(args)
 	case "genkey":
 		err = runGenkey(args)
+	case "genpsk":
+		err = runGenpsk(args)
 	case "run":
 		err = runRun(args)
 	case "status":
@@ -216,7 +219,7 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover,
 		if p.PeerID == cfg.Self.PeerID {
 			continue
 		}
-		row := control.PeerStatus{PeerID: p.PeerID, TunnelIP: p.TunnelIP}
+		row := control.PeerStatus{PeerID: p.PeerID, TunnelIP: p.TunnelIP, PSK: dev.HasPSK(p.PeerID)}
 		if w, ok := live[p.PeerID]; ok {
 			row.Handshake = w.Handshake
 			row.RxBytes, row.TxBytes = w.RxBytes, w.TxBytes
@@ -359,6 +362,31 @@ func countServices(c *config.Config) int {
 		n += len(p.Services)
 	}
 	return n
+}
+
+// runGenpsk는 사전 공유키를 만든다. 상대마다 하나씩 만들어 두 머신에 같은 것을
+// 둔다. 이름은 상대의 peer-id로 짓는다. srv-a에는 psk/srv-b.key를 두고 srv-b에는
+// psk/srv-a.key를 둔다. 내용은 같다.
+func runGenpsk(args []string) error {
+	fs := flag.NewFlagSet("genpsk", flag.ExitOnError)
+	out := fs.String("o", "", "키를 쓸 파일. 비우면 화면에 찍는다")
+	fs.Parse(args)
+
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	key := base64.StdEncoding.EncodeToString(raw)
+	if *out == "" {
+		fmt.Println(key)
+		return nil
+	}
+	if err := os.WriteFile(*out, []byte(key+"\n"), 0o600); err != nil {
+		return err
+	}
+	fmt.Printf("사전 공유키를 %s에 썼습니다. 소유자만 읽을 수 있습니다.\n", *out)
+	fmt.Println("상대 머신에도 같은 내용을 두십시오. 파일 이름은 이 머신의 peer-id입니다.")
+	return nil
 }
 
 func runGenkey(args []string) error {

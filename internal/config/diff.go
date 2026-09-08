@@ -67,7 +67,8 @@ func Diff(old, cur *Config) Changes {
 func sameSelf(a, b Self) bool {
 	if a.PeerID != b.PeerID || a.PrivateKey != b.PrivateKey || a.Domain != b.Domain ||
 		a.TunnelCIDR != b.TunnelCIDR || a.ListenPort != b.ListenPort ||
-		a.Tun != b.Tun || a.DNS != b.DNS || a.Guard.Mode != b.Guard.Mode {
+		a.Tun != b.Tun || a.DNS != b.DNS || a.Guard.Mode != b.Guard.Mode ||
+		a.PSK != b.PSK {
 		return false
 	}
 	return sameInts(a.Guard.KeepTCP, b.Guard.KeepTCP) && sameInts(a.Guard.KeepUDP, b.Guard.KeepUDP)

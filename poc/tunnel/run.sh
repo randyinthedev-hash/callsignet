@@ -33,6 +33,9 @@ cleanup() {
   [ -n "${PID_A:-}" ] && kill "$PID_A" 2>/dev/null || true
   [ -n "${PID_B:-}" ] && kill "$PID_B" 2>/dev/null || true
   [ -n "${PID_B2:-}" ] && kill "$PID_B2" 2>/dev/null || true
+  for pid in "${PID_A3:-}" "${PID_B3:-}" "${PID_A4:-}" "${PID_B4:-}"; do
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  done
   sleep 0.3
   ip netns delete "$NS_A" 2>/dev/null || true
   ip netns delete "$NS_B" 2>/dev/null || true
@@ -81,6 +84,12 @@ echo "== 키와 설정"
 PUB_A=$("$CSA" genkey -o "$WORK/a/private.key" | sed -n 's/^공개키: //p')
 PUB_B=$("$CSA" genkey -o "$WORK/b/private.key" | sed -n 's/^공개키: //p')
 PUB_C=$("$CSA" genkey -o "$WORK/c-unused.key" | sed -n 's/^공개키: //p')
+
+# 사전 공유키는 짝마다 하나다. 두 머신에 상대의 peer-id로 이름 붙여 같은 내용을
+# 둔다. srv-a에는 psk/srv-b.key가, srv-b에는 psk/srv-a.key가 놓인다.
+mkdir -p "$WORK/a/psk" "$WORK/b/psk"
+"$CSA" genpsk -o "$WORK/a/psk/srv-b.key" >/dev/null
+cp "$WORK/a/psk/srv-b.key" "$WORK/b/psk/srv-a.key"
 
 # 두 머신에 서로 다른 앱을 둔다. 이름 해석이 앱마다 다른 답을 내는지 보려는 것이다.
 APP_A=billing
@@ -131,6 +140,10 @@ mtu  = 1420
 
 [dns]
 listen = "127.0.53.1:53"
+
+[psk]
+dir  = "$WORK/$1/psk"
+mode = "required"
 TOML
   cat > "$WORK/$1/policy.toml" <<TOML
 $6
@@ -467,6 +480,9 @@ check(b.get("endpoint", "").startswith(sys.argv[2] + ":"),
 check(b.get("rx-bytes", 0) > 0 and b.get("tx-bytes", 0) > 0,
       "주고받은 바이트를 보여 준다",
       "바이트 수가 0이다. 받음 %s, 보냄 %s" % (b.get("rx-bytes"), b.get("tx-bytes")))
+check(b.get("psk") is True,
+      "사전 공유키를 쓰는 상대를 보여 준다",
+      "사전 공유키를 쓰는데 그렇게 보이지 않는다")
 
 c = peers.get("srv-c", {})
 check(c.get("handshake", "").startswith("0001"),
@@ -801,8 +817,60 @@ serve(9999)
       printf '  ok    %s\n' "멈추면서 규칙을 지웠다"
     fi
 
+
     [ "$OD_OK" = 1 ] || { echo "--- b의 규칙 ---"; ip netns exec "$NS_B" nft list ruleset 2>&1 | sed 's/^/        /'
                           echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa2.log"; exit 1; }
+
+    echo
+    echo "== 사전 공유키가 다를 때"
+    # 지금까지의 검사는 모두 사전 공유키를 쓴 채로 돌았다. 여기서는 한쪽 키만
+    # 바꾸어 세션이 서지 않는 것을 본다. 키가 실제로 handshake에 섞이지 않으면
+    # 달라도 세션이 서므로, 이 검사가 없으면 위의 통과가 아무것도 증명하지 못한다.
+    PSK_OK=1
+    "$CSA" genpsk -o "$WORK/b/psk/srv-a.key" >/dev/null
+    ip netns exec "$NS_A" env CSA_DEBUG= "$CSA" run -c "$WORK/a" > "$WORK/a/csa3.log" 2>&1 & PID_A3=$!
+    ip netns exec "$NS_B" env CSA_DEBUG= "$CSA" run -c "$WORK/b" > "$WORK/b/csa3.log" 2>&1 & PID_B3=$!
+    sleep 3
+    OK=0
+    for _ in $(seq 15); do
+      if ip netns exec "$NS_A" ping -c 1 -W 1 -I "$WG_A" "$WG_B" >/dev/null 2>&1; then OK=1; break; fi
+    done
+    if [ "$OK" = 0 ]; then
+      printf '  ok    %s\n' "키가 다르면 세션이 서지 않는다"
+    else
+      printf '  틀림  %s\n' "키가 다른데 세션이 섰다. 키가 handshake에 섞이지 않는다"; PSK_OK=0
+    fi
+    kill "$PID_A3" "$PID_B3" 2>/dev/null || true
+    sleep 1
+
+    # 키를 맞추면 다시 선다. 앞의 실패가 키 때문이지 다른 까닭이 아님을 보인다.
+    cp "$WORK/a/psk/srv-b.key" "$WORK/b/psk/srv-a.key"
+    ip netns exec "$NS_A" env CSA_DEBUG= "$CSA" run -c "$WORK/a" > "$WORK/a/csa4.log" 2>&1 & PID_A4=$!
+    ip netns exec "$NS_B" env CSA_DEBUG= "$CSA" run -c "$WORK/b" > "$WORK/b/csa4.log" 2>&1 & PID_B4=$!
+    sleep 3
+    OK=0
+    for _ in $(seq 45); do
+      if ip netns exec "$NS_A" ping -c 1 -W 1 -I "$WG_A" "$WG_B" >/dev/null 2>&1; then OK=1; break; fi
+    done
+    if [ "$OK" = 1 ]; then
+      printf '  ok    %s\n' "키를 맞추면 다시 선다"
+    else
+      printf '  틀림  %s\n' "키를 맞췄는데 서지 않는다"; PSK_OK=0
+    fi
+    kill "$PID_A4" "$PID_B4" 2>/dev/null || true
+    sleep 1
+
+    # 반드시 있어야 한다고 해 놓고 없으면 뜨지 않는다.
+    mv "$WORK/b/psk/srv-a.key" "$WORK/b/psk/srv-a.key.away"
+    if "$CSA" check -c "$WORK/b" >/dev/null 2>&1; then
+      printf '  틀림  %s\n' "required인데 키가 없는 설정을 받아들였다"; PSK_OK=0
+    else
+      printf '  ok    %s\n' "required인데 키가 없으면 기동하지 않는다"
+    fi
+    mv "$WORK/b/psk/srv-a.key.away" "$WORK/b/psk/srv-a.key"
+
+    [ "$PSK_OK" = 1 ] || { echo "--- a의 로그 ---"; tail -15 "$WORK/a/csa3.log"; exit 1; }
+
   else
     echo "이름으로는 통하지 않습니다."; exit 1
   fi
