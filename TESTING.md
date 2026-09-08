@@ -126,7 +126,7 @@ MSS 시험은 경로에 `advmss`를 걸어 커널이 크게 알리게 만들고 
 
 `make build-static`을 한 뒤 `sudo make vm`으로 돌린다. 준비물과 까닭은 [poc/vm/README.md](poc/vm/README.md)에 있다.
 
-Ubuntu 24.04와 Rocky 9를 libvirt로 띄우고 각각에 csa를 넣어 돌린다. 확인하는 것은 열셋이다.
+Ubuntu 24.04와 Rocky 9를 libvirt로 띄우고 각각에 csa를 넣어 돌린다. 확인하는 것은 열여덟이다.
 
 Ubuntu에서 넷이다. csa가 systemd-resolved 갈래를 탄다. `/etc/resolv.conf`를 건드리지 않는다. `cs0`에 내부 도메인을 등록한다. 역방향 구역도 등록한다.
 
@@ -134,7 +134,11 @@ Rocky에서 하나다. csa가 파일 첫 줄에 자기를 넣는다. 어느 갈�
 
 이름이 시스템 경로로 풀리는 것 셋이다. `getent`로 묻는다. csa에게 바로 묻지 않고 운영체제가 가는 길을 그대로 밟으려는 것이다.
 
-터널 둘, NetworkManager가 30초 동안 되돌리지 않는 것 하나, 멈춘 뒤 되돌아오는 것 둘이다.
+터널 둘이다.
+
+직통 경로 다섯이다. Rocky에서 firewalld를 끄지 않고 wg 포트만 연 채로, csa가 직통 경로를 닫는다. firewalld가 함께 돌고 있다. firewalld의 표 곁에 csa의 표가 있다. 이 호스트가 csa 없는 머신 노릇을 해서 실제 IP로 서비스 포트에 붙지 못한다. 적지 않은 포트는 그대로 열려 있다.
+
+NetworkManager가 30초 동안 되돌리지 않는 것 하나, 멈춘 뒤 되돌아오는 것 둘이다.
 
 이 시험이 첫 실행에서 잡은 것이 둘이다. 이름 해석기 주소로 쓰던 `127.0.0.54`를 systemd 252부터 systemd-resolved가 쓴다. csa가 그 주소를 잡지 못해 기동하지 못했다. 네임스페이스에는 systemd-resolved가 없어 하네스가 잡을 수 없었다. 그리고 우리 도메인이 아닌 이름의 AAAA에 없다고 답하고 있었다. Rocky의 chrony가 ntp.org를 물은 기록에서 드러났다.
 
@@ -153,7 +157,5 @@ Rocky에서 하나다. csa가 파일 첫 줄에 자기를 넣는다. 어느 갈�
 ## 아직 없는 것
 
 만들면서 함께 채운다.
-
-실제 배포판에서 직통 경로를 닫는 것을 보지 않는다. VM 시험은 `guard.mode`를 `off`로 둔다. 네임스페이스 하네스가 그것을 보지만, Rocky의 firewalld와 함께 도는 것은 아직 보지 않았다.
 
 IPv6 접속 주소를 확인하지 않는다. 설정은 받아들이지만 그 위에서 터널이 서는지 본 적이 없다.

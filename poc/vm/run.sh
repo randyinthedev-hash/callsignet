@@ -113,9 +113,10 @@ CLOUD
   qemu-img create -q -f qcow2 -F qcow2 -b "$2" "$POOL/$1.qcow2"
   printf '  %-12s %s\n' "$1" "$(qemu-img info "$POOL/$1.qcow2" | grep -i 'virtual size')"
 }
-# Rocky는 firewalld가 wg 포트를 막으므로 끈다. 이 시험이 볼 것은 리졸버다.
+# Rocky는 firewalld가 wg 포트를 막는다. 끄지 않고 그 포트만 연다. 실제 배포에서
+# 운영자가 할 일이 이것이고, firewalld의 표와 csa의 표가 함께 도는지 보려는 것이다.
 seed "$VM_A" "$IMG_UBUNTU" "true"
-seed "$VM_B" "$IMG_ROCKY" "systemctl disable --now firewalld 2>/dev/null || true"
+seed "$VM_B" "$IMG_ROCKY" "firewall-offline-cmd --add-port=$PORT/udp >/dev/null 2>&1 || true; systemctl restart firewalld 2>/dev/null || true"
 
 echo "== 가상 망"
 cat > "$WORK/net.xml" <<XML
@@ -240,9 +241,6 @@ mtu  = 1420
 
 [dns]
 listen = "127.0.53.1:53"
-
-[guard]
-mode = "off"
 TOML
   cat > "$WORK/$1/policy.toml" <<TOML
 outbound = ["$4/$5"]
@@ -347,6 +345,38 @@ else say 틀림 "터널이 서지 않는다"; on_a 'tail -20 /var/log/csa.log' |
 if try_a "ping -c 2 -W 2 $APP_B.vm-b.$DOMAIN"; then
   say ok "이름으로 통신한다"
 else say 틀림 "이름으로는 통하지 않는다"; fi
+
+echo
+echo "== 직통 경로"
+# 이 호스트가 csa 없는 머신 노릇을 한다. 가상 망의 브리지로 두 VM에 바로 닿는다.
+$SSH "root@$IP_B" "nohup python3 -c \"
+import socket, threading
+def serve(port):
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(('0.0.0.0', port)); s.listen(8)
+    while True:
+        c, _ = s.accept(); c.sendall(b'here\\n'); c.close()
+threading.Thread(target=serve, args=(8080,), daemon=True).start()
+serve(9999)
+\" >/dev/null 2>&1 &
+sleep 1"
+knock() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2; head -1 <&3" 2>/dev/null || true; }
+if on_b 'grep -q "직통 경로를 닫았습니다" /var/log/csa.log && echo yes' | grep -q yes; then
+  say ok "Rocky에서 csa가 직통 경로를 닫았다"
+else say 틀림 "Rocky에서 닫지 못했다"; on_b 'grep "직통 경로" /var/log/csa.log' | sed 's/^/        /'; fi
+if on_b 'systemctl is-active firewalld' | grep -q '^active'; then
+  say ok "firewalld가 함께 돌고 있다"
+else say 틀림 "firewalld가 돌지 않는다. 함께 도는 것을 보지 못했다"; fi
+if on_b 'nft list table inet callsignet >/dev/null 2>&1 && echo yes' | grep -q yes; then
+  say ok "firewalld의 표 곁에 csa의 표가 있다"
+else say 틀림 "csa의 표가 없다"; on_b 'nft list tables' | sed 's/^/        /'; fi
+if [ -z "$(knock "$IP_B" 8080)" ]; then
+  say ok "csa 없는 머신이 실제 IP로 서비스 포트에 붙지 못한다"
+else say 틀림 "실제 IP로 서비스 포트에 붙었다"; fi
+if [ "$(knock "$IP_B" 9999)" = "here" ]; then
+  say ok "peers.toml에 없는 포트는 그대로 열려 있다"
+else say 틀림 "적지 않은 포트까지 막았다. firewalld가 막았을 수도 있다"; fi
+on_b 'pkill -f "serve(9999)"' >/dev/null
 
 echo
 echo "== B의 파일이 남아 있나"
