@@ -143,6 +143,28 @@ func (f *flows) IsReply(k flowKey) bool {
 	return true
 }
 
+// Forget은 들여 둔 연결 가운데 keep이 거짓을 돌려주는 것을 잊는다. 잊은 개수를
+// 돌려준다.
+//
+// 정책이 바뀌었을 때 부른다. 들여 둔 기억을 그대로 두면 그 연결의 되돌아오는
+// 패킷이 정책을 다시 보지 않고 지나간다. 철회한 뒤에도 그 방향으로 자료가
+// 오간다는 뜻이다.
+func (f *flows) Forget(keep func(flowKey) bool) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n := 0
+	for k, e := range f.seen {
+		if !e.allowed {
+			continue
+		}
+		if !keep(k) {
+			delete(f.seen, k)
+			n++
+		}
+	}
+	return n
+}
+
 // sweep은 오래된 것을 버린다. 자물쇠를 쥔 채로 부른다.
 func (f *flows) sweep(now time.Time) {
 	for k, e := range f.seen {

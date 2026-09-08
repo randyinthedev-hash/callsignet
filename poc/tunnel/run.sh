@@ -33,6 +33,7 @@ cleanup() {
   [ -n "${PID_A:-}" ] && kill "$PID_A" 2>/dev/null || true
   [ -n "${PID_B:-}" ] && kill "$PID_B" 2>/dev/null || true
   [ -n "${PID_B2:-}" ] && kill "$PID_B2" 2>/dev/null || true
+  [ -n "${RV_SRV:-}" ] && kill "$RV_SRV" 2>/dev/null || true
   for pid in "${PID_A3:-}" "${PID_B3:-}" "${PID_A4:-}" "${PID_B4:-}"; do
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
   done
@@ -558,6 +559,71 @@ PYCHECK
     fi
 
     [ "$RL_OK" = 1 ] || exit 1
+
+    echo
+    echo "== 철회"
+    # 오가는 중인 연결에서 정책을 거두면 그 연결로 더 오가지 못해야 한다.
+    #
+    # 재는 것은 서버가 미는 방향이다. 앱이 부르는 방향은 고치기 전에도 막혔다.
+    # 살아남던 것은 받는 쪽이 되돌려 보내는 방향이다. csa가 들여 둔 연결을
+    # 기억해 그 방향을 정책 없이 통과시키기 때문이다.
+    RV_OK=1
+    ip netns exec "$NS_B" python3 -c "
+import socket, time
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('$WG_B', 8080))
+s.listen(1)
+c, _ = s.accept()
+c.sendall(b'echo:' + c.recv(64))
+time.sleep(6)          # 이 사이에 하네스가 정책을 거둔다
+c.sendall(b'push\n')   # 거둔 뒤에 서버가 먼저 민다
+time.sleep(5)
+" > "$WORK/b/revoke-srv.out" 2>&1 & RV_SRV=$!
+    sleep 1
+    ip netns exec "$NS_A" python3 -c "
+import socket
+s = socket.socket(); s.settimeout(5)
+s.connect(('$WG_B', 8080))
+s.sendall(b'first\n')
+print('첫째', s.recv(64).decode().strip(), flush=True)
+s.settimeout(10)
+try:
+    got = s.recv(64)
+    print('밀어 준 것', got.decode().strip() if got else '연결이 닫혔다')
+except OSError as e:
+    print('밀어 준 것 막힘', type(e).__name__)
+" > "$WORK/revoke.out" 2>&1 & RV_CLI=$!
+    sleep 3
+
+    # srv-b가 srv-a를 더 들이지 않게 한다.
+    cat > "$WORK/b/policy.toml" <<TOML
+outbound = ["srv-a/$APP_A"]
+
+[[inbound]]
+app   = "$APP_B"
+allow = []
+TOML
+    "$CSA" reload -c "$WORK/b" >/dev/null
+    wait "$RV_CLI" 2>/dev/null || true
+    kill "$RV_SRV" 2>/dev/null || true
+
+    if grep -q "^첫째 echo:first" "$WORK/revoke.out"; then
+      printf '  ok    %s\n' "거두기 전에는 오간다"
+    else
+      printf '  틀림  %s\n' "거두기 전부터 오가지 못한다"; sed 's/^/        /' "$WORK/revoke.out"; RV_OK=0
+    fi
+    if grep -q "^밀어 준 것 막힘\|^밀어 준 것 연결이 닫혔다" "$WORK/revoke.out"; then
+      printf '  ok    %s\n' "거둔 뒤에는 받는 쪽이 미는 것도 막힌다"
+    else
+      printf '  틀림  %s\n' "거두었는데 받는 쪽이 미는 것이 앱에 닿는다"; sed 's/^/        /' "$WORK/revoke.out"; RV_OK=0
+    fi
+    if grep -q "정책이 바뀌어 들여 둔 연결" "$WORK/b/csa.log"; then
+      printf '  ok    %s\n' "몇 개를 잊었는지 적는다"
+    else
+      printf '  틀림  %s\n' "잊었다고 적지 않는다"; RV_OK=0
+    fi
+    [ "$RV_OK" = 1 ] || exit 1
 
     echo
     echo "== IP 대역 정책"

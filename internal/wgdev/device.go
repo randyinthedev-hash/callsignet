@@ -227,7 +227,40 @@ func (d *Device) Reload(c *config.Config) error {
 	d.flt.rules.Store(rules)
 	d.bnd.setKnown(snap.known)
 	d.snap.Store(snap)
+
+	// 새 정책으로 다시 재어 보고 허가되지 않는 연결의 기억을 지운다. 그러지
+	// 않으면 철회한 뒤에도 그 연결의 되돌아오는 패킷이 정책을 다시 보지 않고
+	// 지나간다.
+	if n := d.flt.conns.Forget(func(k flowKey) bool { return d.stillAllowed(rules, k) }); n > 0 {
+		d.logf("정책이 바뀌어 들여 둔 연결 %d개를 잊었습니다. 그 연결로는 더 오가지 못합니다.", n)
+	}
 	return nil
+}
+
+// stillAllowed는 들여 둔 연결 하나가 새 정책으로도 허가되는지 본다.
+//
+// 어느 방향을 들인 기억인지는 출발지로 가린다. 출발지가 상대의 터널 IP이면 그
+// 상대에게서 온 것을 들인 기억이고, 목적지가 상대의 터널 IP이면 이 머신이
+// 내보낸 것을 들인 기억이다. 둘 다 아니면 모르는 연결이므로 잊는다.
+func (d *Device) stillAllowed(r *policy.Rules, k flowKey) bool {
+	hasPorts := k.proto == protoTCP || k.proto == protoUDP
+	if _, ok := r.PeerOf(k.src); ok {
+		var from netip.Addr
+		if (hasPorts && r.NeedsSource(k.dport)) || (!hasPorts && r.NeedsSourceICMP()) {
+			from = d.flt.observedAddr(r, k.src)
+		}
+		if hasPorts {
+			return r.Inbound(k.src, k.dport, from).Allow
+		}
+		return r.InboundICMP(k.src, from).Allow
+	}
+	if _, ok := r.PeerOf(k.dst); ok {
+		if hasPorts {
+			return r.Outbound(k.dst, k.dport).Allow
+		}
+		return r.OutboundICMP(k.dst).Allow
+	}
+	return false
 }
 
 // endpointOf는 그 상대에게서 패킷이 실제로 온 주소를 돌려준다. wg가 복호화하면서

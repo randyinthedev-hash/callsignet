@@ -133,3 +133,34 @@ func TestConnsUsesProtocolTTL(t *testing.T) {
 		t.Error("UDP를 TCP만큼 오래 기억한다")
 	}
 }
+
+// 정책이 바뀌면 들여 둔 기억 가운데 허가되지 않는 것을 잊어야 한다. 그러지
+// 않으면 철회한 뒤에도 그 연결의 되돌아오는 패킷이 정책을 다시 보지 않고 지난다.
+func TestForgetDropsRevoked(t *testing.T) {
+	f := newConns(connMax)
+	keep := key(40000)
+	drop := key(40001)
+	f.Allow(keep)
+	f.Allow(drop)
+
+	n := f.Forget(func(k flowKey) bool { return k.sport != 40001 })
+	if n != 1 {
+		t.Fatalf("하나를 잊어야 하는데 %d개", n)
+	}
+	if !f.IsReply(keep.reverse()) {
+		t.Error("허가된 연결까지 잊었다")
+	}
+	if f.IsReply(drop.reverse()) {
+		t.Error("허가되지 않은 연결을 그대로 두었다")
+	}
+}
+
+// 들이지 않은 기억은 Forget이 건드리지 않는다. 그것은 기록용이지 들인 표시가 아니다.
+func TestForgetLeavesUnadmitted(t *testing.T) {
+	f := newConns(connMax)
+	k := key(40000)
+	f.First(k) // 처음 보았다고만 적는다. 들인 것이 아니다
+	if n := f.Forget(func(flowKey) bool { return false }); n != 0 {
+		t.Errorf("들이지 않은 것을 셌다: %d개", n)
+	}
+}
