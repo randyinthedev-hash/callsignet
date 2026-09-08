@@ -32,14 +32,14 @@ func TestDetect(t *testing.T) {
 
 func TestResolvConfPutsUsFirst(t *testing.T) {
 	old := "nameserver 10.0.0.53\nnameserver 8.8.8.8\noptions timeout:1\n"
-	got := ResolvConf(old, "127.0.0.54", "cs.example.internal")
+	got := ResolvConf(old, "127.0.53.1", "cs.example.internal")
 	lines := []string{}
 	for _, l := range strings.Split(got, "\n") {
 		if strings.HasPrefix(l, "nameserver ") {
 			lines = append(lines, l)
 		}
 	}
-	if len(lines) != 3 || lines[0] != "nameserver 127.0.0.54" {
+	if len(lines) != 3 || lines[0] != "nameserver 127.0.53.1" {
 		t.Fatalf("csa가 첫 줄이어야 하는데 %v", lines)
 	}
 	// 원래 리졸버를 남겨야 csa가 멈춰도 다른 이름 해석이 산다.
@@ -56,15 +56,15 @@ func TestResolvConfPutsUsFirst(t *testing.T) {
 
 func TestResolvConfDoesNotRepeatItself(t *testing.T) {
 	// 이미 고친 파일을 다시 읽어도 우리 주소가 두 번 들어가면 안 된다.
-	once := ResolvConf("nameserver 10.0.0.53\n", "127.0.0.54", "cs.example.internal")
-	twice := ResolvConf(once, "127.0.0.54", "cs.example.internal")
-	if strings.Count(twice, "nameserver 127.0.0.54") != 1 {
+	once := ResolvConf("nameserver 10.0.0.53\n", "127.0.53.1", "cs.example.internal")
+	twice := ResolvConf(once, "127.0.53.1", "cs.example.internal")
+	if strings.Count(twice, "nameserver 127.0.53.1") != 1 {
 		t.Fatalf("우리 주소가 여러 번 들어갔다:\n%s", twice)
 	}
 }
 
 func TestResolvedArgs(t *testing.T) {
-	args := ResolvedArgs("cs0", "127.0.0.54", "cs.example.internal", "0.91.10.in-addr.arpa")
+	args := ResolvedArgs("cs0", "127.0.53.1", "cs.example.internal", "0.91.10.in-addr.arpa")
 	if len(args) != 2 {
 		t.Fatalf("두 벌이어야 하는데 %d벌", len(args))
 	}
@@ -114,15 +114,15 @@ func TestResolvTargetFollowsLink(t *testing.T) {
 // 되돌릴 때 csa가 넣은 줄만 지운다. csa가 도는 동안 다른 것이 넣은 줄은 남긴다.
 func TestRestoreKeepsOtherChanges(t *testing.T) {
 	cur := Marker + "\n" +
-		"nameserver 127.0.0.54\n" +
+		"nameserver 127.0.53.1\n" +
 		"nameserver 10.0.0.53\n" +
 		"nameserver 10.0.0.54\n" + // csa가 도는 동안 DHCP가 넣었다고 하자
 		"search cs.example.internal\n" +
 		"search corp.example.com\n" +
 		"options edns0\n"
-	got := Restore(cur, "127.0.0.54", "cs.example.internal")
+	got := Restore(cur, "127.0.53.1", "cs.example.internal")
 
-	for _, gone := range []string{Marker, "nameserver 127.0.0.54", "search cs.example.internal"} {
+	for _, gone := range []string{Marker, "nameserver 127.0.53.1", "search cs.example.internal"} {
 		if strings.Contains(got, gone) {
 			t.Errorf("csa가 넣은 것이 남았다: %q\n%s", gone, got)
 		}

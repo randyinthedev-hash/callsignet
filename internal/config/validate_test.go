@@ -36,7 +36,7 @@ func good(t *testing.T) *Config {
 			PeerID: "srv-a", PrivateKey: key, Domain: "cs.example.internal",
 			TunnelCIDR: "10.91.0.0/24", ListenPort: 51820,
 			Tun: Tun{Name: "cs0", MTU: 1420},
-			DNS: DNS{Listen: "127.0.0.54:53", TTL: 300},
+			DNS: DNS{Listen: "127.0.53.1:53", TTL: 300},
 		},
 		Peers: []Peer{
 			{PeerID: "srv-a", PublicKey: pubA, TunnelIP: "10.91.0.1",
@@ -140,7 +140,7 @@ name = "cs0"
 mtu  = 1420
 
 [dns]
-listen = "127.0.0.54:53"
+listen = "127.0.53.1:53"
 ttl    = 300
 `)
 	write("peers.toml", `
@@ -162,7 +162,7 @@ allow = ["srv-a"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Self.PeerID != "srv-a" || c.Self.Tun.MTU != 1420 || c.Self.DNS.Listen != "127.0.0.54:53" || c.Self.DNS.TTL != 300 {
+	if c.Self.PeerID != "srv-a" || c.Self.Tun.MTU != 1420 || c.Self.DNS.Listen != "127.0.53.1:53" || c.Self.DNS.TTL != 300 {
 		t.Fatalf("csa.toml을 잘못 읽었다: %+v", c.Self)
 	}
 	if len(c.Peers) != 1 || c.Peers[0].Services[0].Port != 8080 {

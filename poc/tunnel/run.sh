@@ -130,7 +130,7 @@ name = "cs0"
 mtu  = 1420
 
 [dns]
-listen = "127.0.0.54:53"
+listen = "127.0.53.1:53"
 TOML
   cat > "$WORK/$1/policy.toml" <<TOML
 $6
@@ -178,7 +178,7 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
   echo
   echo "== 리졸버 자리 차지하기"
   TAKE_OK=1
-  if grep -q "^nameserver 127.0.0.54" "/etc/netns/$NS_A/resolv.conf"; then
+  if grep -q "^nameserver 127.0.53.1" "/etc/netns/$NS_A/resolv.conf"; then
     printf '  ok    %s\n' "csa가 자기를 첫 줄에 넣었다"
   else
     printf '  틀림  %s\n' "csa가 파일을 가져가지 않았다"; TAKE_OK=0
@@ -199,7 +199,7 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
   echo "== 이름 해석"
   NAME_OK=1
   check_dig() { # 질의 기대값 설명
-    got=$(ip netns exec "$NS_A" dig @127.0.0.54 +short +time=2 +tries=1 $1 2>/dev/null | head -1)
+    got=$(ip netns exec "$NS_A" dig @127.0.53.1 +short +time=2 +tries=1 $1 2>/dev/null | head -1)
     if [ "$got" = "$2" ]; then
       printf '  ok    %-46s -> %s\n' "$3" "$got"
     else
@@ -212,15 +212,15 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
 
   check_dig "$APP_A.srv-a.cs.test.internal A" "$WG_A"                    "자기 서비스 이름"
 
-  rc=$(ip netns exec "$NS_A" dig @127.0.0.54 +time=2 +tries=1 "$APP_A.srv-b.cs.test.internal" A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
+  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 "$APP_A.srv-b.cs.test.internal" A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
   if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "다른 머신의 앱 이름"
   else printf '  틀림  %-46s -> %s\n' "다른 머신의 앱 이름" "${rc:-없음}"; NAME_OK=0; fi
 
-  rc=$(ip netns exec "$NS_A" dig @127.0.0.54 +time=2 +tries=1 srv-z.cs.test.internal A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
+  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 srv-z.cs.test.internal A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
   if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "설정에 없는 이름"
   else printf '  틀림  %-46s -> %s\n' "설정에 없는 이름" "${rc:-없음}"; NAME_OK=0; fi
 
-  rc=$(ip netns exec "$NS_A" dig @127.0.0.54 +time=2 +tries=1 www.example.com A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
+  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 www.example.com A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
   if [ "$rc" = REFUSED ]; then printf '  ok    %-46s -> REFUSED\n' "우리 도메인이 아닌 이름"
   else printf '  틀림  %-46s -> %s\n' "우리 도메인이 아닌 이름" "${rc:-없음}"; NAME_OK=0; fi
 
@@ -524,7 +524,7 @@ PYCHECK
     else
       printf '  틀림  %s\n' "더한 상대를 알리지 않는다"; printf '%s\n' "$out" | sed 's/^/        /'; RL_OK=0
     fi
-    got=$(ip netns exec "$NS_A" dig @127.0.0.54 +short +time=2 +tries=1 ledger.srv-d.cs.test.internal A 2>/dev/null | head -1)
+    got=$(ip netns exec "$NS_A" dig @127.0.53.1 +short +time=2 +tries=1 ledger.srv-d.cs.test.internal A 2>/dev/null | head -1)
     if [ "$got" = "10.91.0.4" ]; then
       printf '  ok    %s\n' "더한 상대의 이름이 바로 풀린다"
     else
@@ -710,7 +710,7 @@ for p in st['peers']:
       sleep 0.2
     done
     if grep -q "^nameserver $UPSTREAM" "/etc/netns/$NS_A/resolv.conf" &&
-       ! grep -q "^nameserver 127.0.0.54" "/etc/netns/$NS_A/resolv.conf"; then
+       ! grep -q "^nameserver 127.0.53.1" "/etc/netns/$NS_A/resolv.conf"; then
       echo "  ok    csa가 멈추면서 원래 파일로 되돌렸다"
     else
       echo "  틀림  되돌리지 않았다"

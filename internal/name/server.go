@@ -62,7 +62,9 @@ func (s *Server) startOne(listen string) error {
 	udp.NotifyStartedFunc = func() { ready <- nil }
 	go func() {
 		if err := udp.ListenAndServe(); err != nil {
-			ready <- fmt.Errorf("이름 해석기를 열지 못했다: %s: %w", listen, err)
+			ready <- fmt.Errorf("이름 해석기를 열지 못했다. 다른 것이 그 주소를 쓰고 있으면"+
+				" csa.toml의 dns.listen을 다른 루프백 주소로 바꾸라. systemd-resolved는"+
+				" 127.0.0.53과 127.0.0.54를 쓴다: %s: %w", listen, err)
 		}
 	}()
 	go func() {

@@ -239,7 +239,7 @@ name = "cs0"
 mtu  = 1420
 
 [dns]
-listen = "127.0.0.54:53"
+listen = "127.0.53.1:53"
 
 [guard]
 mode = "off"
@@ -285,11 +285,22 @@ for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
 done
 
 VM_OK=1
+# csa가 죽어 있으면 그 뒤의 검사는 뜻이 없다. 여기서 멈춘다.
+for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
+  set -- $pair
+  if ! $SSH "root@$1" 'pgrep -x csa >/dev/null'; then
+    echo "  $2에서 csa가 죽었습니다. 위 로그를 보십시오."; exit 1
+  fi
+done
 say() { # ok/틀림 설명
   if [ "$1" = ok ]; then printf '  ok    %s\n' "$2"; else printf '  틀림  %s\n' "$2"; VM_OK=0; fi
 }
+# on_a와 on_b는 출력을 얻을 때 쓴다. 실패해도 스크립트가 멈추지 않도록 결과를
+# 삼킨다. 성공했는지가 곧 검사인 자리에는 쓰면 안 된다. 늘 참이 된다.
 on_a() { $SSH "root@$IP_A" "$1" 2>/dev/null || true; }
 on_b() { $SSH "root@$IP_B" "$1" 2>/dev/null || true; }
+# try_a는 성공했는지가 곧 검사인 자리에 쓴다.
+try_a() { $SSH "root@$IP_A" "$1" >/dev/null 2>&1; }
 
 echo
 echo "== A(Ubuntu) 리졸버 갈래"
@@ -312,7 +323,7 @@ else say 틀림 "역방향 구역이 없다"; fi
 echo
 echo "== B(Rocky) 리졸버 갈래"
 echo "  csa가 판별한 것: $(on_b 'grep "관리 주체는" /var/log/csa.log | head -1')"
-if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.0.54"; then
+if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.53.1"; then
   say ok "자기를 첫 줄에 넣었다"
 else say 틀림 "파일을 가져가지 못했다"; on_b 'head -5 /etc/resolv.conf' | sed 's/^/        /'; fi
 
@@ -330,10 +341,10 @@ else say 틀림 "역방향이 풀리지 않는다: $(on_a "getent hosts $WG_B")"
 
 echo
 echo "== 터널"
-if on_a "ping -c 3 -W 2 -I cs0 $WG_B" >/dev/null 2>&1; then
+if try_a "ping -c 3 -W 2 -I cs0 $WG_B"; then
   say ok "진짜 머신 둘 사이에 터널이 선다"
 else say 틀림 "터널이 서지 않는다"; on_a 'tail -20 /var/log/csa.log' | sed 's/^/        /'; fi
-if on_a "ping -c 2 -W 2 $APP_B.vm-b.$DOMAIN" >/dev/null 2>&1; then
+if try_a "ping -c 2 -W 2 $APP_B.vm-b.$DOMAIN"; then
   say ok "이름으로 통신한다"
 else say 틀림 "이름으로는 통하지 않는다"; fi
 
@@ -341,7 +352,7 @@ echo
 echo "== B의 파일이 남아 있나"
 echo "  30초 기다립니다. NetworkManager가 되돌리는지 봅니다."
 sleep 30
-if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.0.54"; then
+if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.53.1"; then
   say ok "NetworkManager가 되돌리지 않았다"
 else say 틀림 "NetworkManager가 csa의 줄을 지웠다"; on_b 'head -5 /etc/resolv.conf' | sed 's/^/        /'; fi
 
@@ -352,7 +363,7 @@ sleep 3
 if ! on_a "resolvectl status cs0" | grep -q "$DOMAIN"; then
   say ok "A에서 인터페이스와 함께 설정이 사라졌다"
 else say 틀림 "A에 설정이 남았다"; fi
-if ! on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.0.54"; then
+if ! on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.53.1"; then
   say ok "B에서 원래 파일로 되돌렸다"
 else say 틀림 "B에 csa의 줄이 남았다"; fi
 
