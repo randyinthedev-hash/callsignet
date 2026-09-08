@@ -96,6 +96,11 @@ func TestServerAAAAIsEmptyNotMissing(t *testing.T) {
 	if m.Rcode != dns.RcodeSuccess || len(m.Answer) != 0 {
 		t.Fatalf("있는 이름의 빈 답이어야 하는데 %v", m)
 	}
+	// 우리 도메인이 아닌 이름은 AAAA도 거절한다. 없다고 답하면 리졸버가 다음
+	// 리졸버에 묻지 않는다. 실제 VM에서 chrony가 ntp.org를 물었을 때 그렇게 답했다.
+	if m := ask(t, "www.example.com", dns.TypeAAAA); m.Rcode != dns.RcodeRefused {
+		t.Errorf("우리 도메인이 아닌 이름의 AAAA는 거절해야 하는데 %s", dns.RcodeToString[m.Rcode])
+	}
 	if m := ask(t, "srv-z.cs.example.internal", dns.TypeAAAA); m.Rcode != dns.RcodeNameError {
 		t.Fatalf("없는 이름이어야 하는데 %s", dns.RcodeToString[m.Rcode])
 	}

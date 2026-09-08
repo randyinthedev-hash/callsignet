@@ -143,8 +143,13 @@ func (s *Server) handle(w dns.ResponseWriter, r *dns.Msg) {
 	case dns.TypePTR:
 		s.answerPTR(t, m, q)
 	case dns.TypeAAAA:
-		// 이름은 있으나 IPv6 주소가 없다. 없는 이름과 구별해야 한다.
-		if _, ok := t.Forward(q.Name); !ok {
+		// 우리 도메인이 아니면 A와 같이 거절한다. 없다고 답하면 리졸버가 그 말을
+		// 믿고 다음 리졸버에 묻지 않는다. 우리 도메인인데 표에 없으면 없다고
+		// 답하고, 표에 있으면 IPv6 주소가 없다는 뜻으로 답 없이 성공으로 둔다.
+		switch _, known := t.Forward(q.Name); {
+		case !t.InDomain(q.Name):
+			m.SetRcode(r, dns.RcodeRefused)
+		case !known:
 			m.SetRcode(r, dns.RcodeNameError)
 		}
 	default:

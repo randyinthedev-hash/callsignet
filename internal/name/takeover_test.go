@@ -18,7 +18,7 @@ func TestDetect(t *testing.T) {
 	}{
 		{"stub을 가리키면 resolved", "../run/systemd/resolve/stub-resolv.conf", stub, ManagerResolved},
 		{"내용이 비면 링크로 가린다", "/run/systemd/resolve/resolv.conf", "", ManagerResolved},
-		{"NetworkManager 링크", "/run/NetworkManager/resolv.conf", "", ManagerNetworkManager},
+		{"NetworkManager 링크도 파일 갈래", "/run/NetworkManager/resolv.conf", "", ManagerFile},
 		{"평범한 파일", "", other, ManagerFile},
 		{"링크는 systemd인데 내용은 다른 리졸버", "../run/systemd/resolve/stub-resolv.conf", other, ManagerFile},
 		{"아무것도 없다", "", "", ManagerFile},

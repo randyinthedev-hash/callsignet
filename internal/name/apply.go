@@ -51,13 +51,14 @@ func Apply(iface, listenAddr, tunnelIP, domain, revZone string, logf func(string
 				return nil, err
 			}
 		}
-	case ManagerNetworkManager:
-		// NetworkManager의 전역 DNS 설정은 백엔드에 따라 무시된다. 그래서 파일을
-		// 직접 고치되, NetworkManager가 되돌릴 수 있다는 것을 알린다.
-		logf("NetworkManager가 %s를 관리합니다. csa가 직접 고치지만 NetworkManager가"+
-			" 되돌릴 수 있습니다. 그때는 systemd-resolved를 쓰도록 바꾸십시오.", resolvConf)
-		fallthrough
 	default:
+		// NetworkManager가 도는 머신에서는 그것이 파일을 되쓸 수 있다. 실제
+		// Rocky 9에서는 30초 동안 되쓰지 않았지만, 링크가 다시 붙는 때는 다르다.
+		if _, err := os.Stat("/run/NetworkManager"); err == nil {
+			logf("NetworkManager가 돌고 있습니다. csa가 %s를 직접 고치지만 NetworkManager가"+
+				" 링크를 다시 붙일 때 되쓸 수 있습니다. 그때는 이름이 풀리지 않으므로 csa를"+
+				" 다시 띄우십시오.", resolvConf)
+		}
 		if err := t.applyFile(listenIP, domain); err != nil {
 			return nil, err
 		}

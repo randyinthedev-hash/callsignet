@@ -220,6 +220,10 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
   if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "설정에 없는 이름"
   else printf '  틀림  %-46s -> %s\n' "설정에 없는 이름" "${rc:-없음}"; NAME_OK=0; fi
 
+  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 www.example.com AAAA 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
+  if [ "$rc" = REFUSED ]; then printf '  ok    %-46s -> REFUSED\n' "우리 도메인이 아닌 이름의 AAAA"
+  else printf '  틀림  %-46s -> %s\n' "우리 도메인이 아닌 이름의 AAAA" "${rc:-없음}"; NAME_OK=0; fi
+
   rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 www.example.com A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
   if [ "$rc" = REFUSED ]; then printf '  ok    %-46s -> REFUSED\n' "우리 도메인이 아닌 이름"
   else printf '  틀림  %-46s -> %s\n' "우리 도메인이 아닌 이름" "${rc:-없음}"; NAME_OK=0; fi

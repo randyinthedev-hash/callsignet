@@ -6,27 +6,26 @@ import (
 )
 
 // Manager는 그 머신에서 이름 해석 설정을 누가 쥐고 있는지 가린다.
+//
+// 둘뿐이다. NetworkManager를 따로 두지 않는다. NetworkManager가 관리하는 머신은
+// /etc/resolv.conf에 실제 리졸버를 적어 두므로 csa가 내용을 보고 파일 갈래로
+// 가고, 파일 갈래가 하는 일이 그 경우에도 같다. 실제 Rocky 9에서 확인했다.
 type Manager int
 
 const (
-	// ManagerFile은 아무도 관리하지 않는 경우다. csa가 /etc/resolv.conf를 직접 고친다.
+	// ManagerFile은 아무도 관리하지 않거나 NetworkManager가 관리하는 경우다.
+	// csa가 /etc/resolv.conf를 직접 고친다.
 	ManagerFile Manager = iota
 	// ManagerResolved는 systemd-resolved가 관리하는 경우다. csa가 내부 도메인만
 	// 자기에게 보내도록 등록한다.
 	ManagerResolved
-	// ManagerNetworkManager는 NetworkManager가 관리하는 경우다.
-	ManagerNetworkManager
 )
 
 func (m Manager) String() string {
-	switch m {
-	case ManagerResolved:
+	if m == ManagerResolved {
 		return "systemd-resolved"
-	case ManagerNetworkManager:
-		return "NetworkManager"
-	default:
-		return "직접 관리"
 	}
+	return "직접 관리"
 }
 
 // ResolvedStub은 systemd-resolved가 질의를 받는 주소다.
@@ -48,14 +47,10 @@ func Detect(link, content string, hasResolvectl bool) Manager {
 		// 다른 리졸버를 가리키고 있다. 그 파일을 우리가 고친다.
 		return ManagerFile
 	}
-	switch {
-	case strings.Contains(link, "systemd"):
+	if strings.Contains(link, "systemd") {
 		return ManagerResolved
-	case strings.Contains(link, "NetworkManager"):
-		return ManagerNetworkManager
-	default:
-		return ManagerFile
 	}
+	return ManagerFile
 }
 
 // ResolvConf는 csa를 첫 줄에 둔 /etc/resolv.conf 내용을 만든다.
