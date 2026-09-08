@@ -113,10 +113,11 @@ CLOUD
   qemu-img create -q -f qcow2 -F qcow2 -b "$2" "$POOL/$1.qcow2"
   printf '  %-12s %s\n' "$1" "$(qemu-img info "$POOL/$1.qcow2" | grep -i 'virtual size')"
 }
-# Rocky는 firewalld가 wg 포트를 막는다. 끄지 않고 그 포트만 연다. 실제 배포에서
-# 운영자가 할 일이 이것이고, firewalld의 표와 csa의 표가 함께 도는지 보려는 것이다.
+# Rocky에서 운영자가 할 일 둘을 그대로 한다. 클라우드 이미지에 nftables 패키지가
+# 없으므로 설치하고, firewalld를 끄지 않은 채 wg 포트만 연다. firewalld의 표와
+# csa의 표가 함께 도는지 보려는 것이다.
 seed "$VM_A" "$IMG_UBUNTU" "true"
-seed "$VM_B" "$IMG_ROCKY" "firewall-offline-cmd --add-port=$PORT/udp >/dev/null 2>&1 || true; systemctl restart firewalld 2>/dev/null || true"
+seed "$VM_B" "$IMG_ROCKY" "dnf -y install nftables >/dev/null 2>&1; firewall-offline-cmd --add-port=$PORT/udp >/dev/null 2>&1 || true; systemctl restart firewalld 2>/dev/null || true"
 
 echo "== 가상 망"
 cat > "$WORK/net.xml" <<XML
@@ -203,6 +204,11 @@ diagnose() { # 이름 주소
 echo "  붙기를 기다립니다. 두 머신이 뜨는 데 1분쯤 걸립니다."
 wait_ssh "$VM_A" "$IP_A"
 wait_ssh "$VM_B" "$IP_B"
+# sshd는 cloud-init이 준비 명령을 끝내기 전에 뜬다. 패키지 설치가 끝날 때까지 기다린다.
+echo "  cloud-init이 준비를 마치기를 기다립니다. Rocky는 패키지를 하나 설치합니다."
+for ip in "$IP_A" "$IP_B"; do
+  $SSH "root@$ip" 'cloud-init status --wait >/dev/null 2>&1 || true'
+done
 
 echo "== 키와 설정"
 PUB_A=$("$CSA" genkey -o "$WORK/a.key" | sed -n 's/^공개키: //p')
