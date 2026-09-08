@@ -10,6 +10,10 @@ csa는 운영자가 적은 로컬 설정 파일로 움직인다. 머신마다 �
 
 [Apache License 2.0](LICENSE)이다.
 
+## 함께 만들기
+
+고치거나 늘리려면 [CONTRIBUTING.md](CONTRIBUTING.md)를 본다. 취약점을 찾았으면 공개 이슈로 올리지 않고 [SECURITY.md](SECURITY.md)의 경로로 알린다. 이 리포는 [행동 강령](CODE_OF_CONDUCT.md)을 따른다.
+
 ## 만들기와 돌리기
 
 Go 1.26 이상이 필요하다. csa는 리눅스에서만 돈다. TUN 인터페이스를 만들고 경로를 넣으므로 네트워크 관리 권한이 필요하다. 직통 경로를 닫는 데 `nft` 명령을 쓰므로 nftables도 있어야 한다. Ubuntu에는 처음부터 있고, RHEL 계열은 `dnf install nftables`로 설치한다. 닫지 않으려면 `csa.toml`에 `guard.mode = "off"`를 둔다. RHEL 계열은 firewalld가 wg 포트를 막으므로 그 포트도 열어야 한다.
