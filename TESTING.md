@@ -136,7 +136,7 @@ Rocky에서 하나다. csa가 파일 첫 줄에 자기를 넣는다. 어느 갈�
 
 터널 둘이다.
 
-직통 경로 다섯이다. Rocky에서 firewalld를 끄지 않고 wg 포트만 연 채로, csa가 직통 경로를 닫는다. firewalld가 함께 돌고 있다. firewalld의 표 곁에 csa의 표가 있다. 이 호스트가 csa 없는 머신 노릇을 해서 실제 IP로 서비스 포트에 붙지 못한다. 적지 않은 포트는 그대로 열려 있다.
+직통 경로 다섯이다. Rocky에 firewalld를 설치해 켜고 wg 포트와 앱 포트를 연 채로, csa가 직통 경로를 닫는다. firewalld가 함께 돌고 있다. firewalld의 표 곁에 csa의 표가 있다. firewalld가 앱 포트를 열어 두어도 이 호스트가 실제 IP로 그 포트에 붙지 못한다. 적지 않은 포트는 그대로 열려 있다.
 
 NetworkManager가 30초 동안 되돌리지 않는 것 하나, 멈춘 뒤 되돌아오는 것 둘이다.
 

@@ -113,11 +113,11 @@ CLOUD
   qemu-img create -q -f qcow2 -F qcow2 -b "$2" "$POOL/$1.qcow2"
   printf '  %-12s %s\n' "$1" "$(qemu-img info "$POOL/$1.qcow2" | grep -i 'virtual size')"
 }
-# Rocky에서 운영자가 할 일 둘을 그대로 한다. 클라우드 이미지에 nftables 패키지가
-# 없으므로 설치하고, firewalld를 끄지 않은 채 wg 포트만 연다. firewalld의 표와
-# csa의 표가 함께 도는지 보려는 것이다.
+# Rocky를 실제 서버 모양으로 만든다. 클라우드 이미지에는 nftables도 firewalld도
+# 없다. 둘을 설치하고 firewalld를 켠다. firewalld에는 wg 포트와 앱 포트 둘을
+# 연다. 앱 포트를 firewalld가 열어 두어도 csa가 직통 경로를 막는지 보려는 것이다.
 seed "$VM_A" "$IMG_UBUNTU" "true"
-seed "$VM_B" "$IMG_ROCKY" "dnf -y install nftables >/dev/null 2>&1; firewall-offline-cmd --add-port=$PORT/udp >/dev/null 2>&1 || true; systemctl restart firewalld 2>/dev/null || true"
+seed "$VM_B" "$IMG_ROCKY" "dnf -y install nftables firewalld >/dev/null 2>&1; firewall-offline-cmd --add-port=$PORT/udp --add-port=8080/tcp --add-port=9999/tcp >/dev/null 2>&1; systemctl enable --now firewalld >/dev/null 2>&1"
 
 echo "== 가상 망"
 cat > "$WORK/net.xml" <<XML
@@ -205,7 +205,7 @@ echo "  붙기를 기다립니다. 두 머신이 뜨는 데 1분쯤 걸립니다
 wait_ssh "$VM_A" "$IP_A"
 wait_ssh "$VM_B" "$IP_B"
 # sshd는 cloud-init이 준비 명령을 끝내기 전에 뜬다. 패키지 설치가 끝날 때까지 기다린다.
-echo "  cloud-init이 준비를 마치기를 기다립니다. Rocky는 패키지를 하나 설치합니다."
+echo "  cloud-init이 준비를 마치기를 기다립니다. Rocky는 패키지를 둘 설치합니다."
 for ip in "$IP_A" "$IP_B"; do
   $SSH "root@$ip" 'cloud-init status --wait >/dev/null 2>&1 || true'
 done
@@ -380,7 +380,7 @@ if on_b 'nft list table inet callsignet >/dev/null 2>&1 && echo yes' | grep -q y
   say ok "firewalld의 표 곁에 csa의 표가 있다"
 else say 틀림 "csa의 표가 없다"; on_b 'nft list tables' | sed 's/^/        /'; fi
 if [ -z "$(knock "$IP_B" 8080)" ]; then
-  say ok "csa 없는 머신이 실제 IP로 서비스 포트에 붙지 못한다"
+  say ok "firewalld가 8080을 열어 두어도 csa가 직통 경로를 막는다"
 else say 틀림 "실제 IP로 서비스 포트에 붙었다"; fi
 if [ "$(knock "$IP_B" 9999)" = "here" ]; then
   say ok "peers.toml에 없는 포트는 그대로 열려 있다"
