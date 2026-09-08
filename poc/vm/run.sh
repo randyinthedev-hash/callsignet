@@ -287,7 +287,10 @@ VM_OK=1
 for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
   set -- $pair
   if ! $SSH "root@$1" 'pgrep -x csa >/dev/null'; then
-    echo "  $2에서 csa가 죽었습니다. 위 로그를 보십시오."; exit 1
+    echo "  $2에서 csa가 죽었습니다. 위 로그를 보십시오."
+    echo "  --- $2의 nft와 PATH ---"
+    $SSH "root@$1" 'ls -l /usr/sbin/nft 2>&1; echo "PATH=$PATH"; rpm -q nftables 2>/dev/null || dpkg -l nftables 2>/dev/null | tail -1' | sed 's/^/    /'
+    exit 1
   fi
 done
 say() { # ok/틀림 설명

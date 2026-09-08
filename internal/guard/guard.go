@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -143,7 +144,24 @@ func dedup(in []int) []int {
 type Guard struct {
 	mode Mode
 	on   bool
+	nft  string // nft 명령의 자리
 	logf func(string, ...any)
+}
+
+// findNft는 nft 명령을 찾는다. PATH에서 먼저 찾고, 없으면 sbin 자리들을 본다.
+// RHEL 계열은 서비스나 SSH로 바로 띄운 명령의 PATH에 /usr/sbin을 넣지 않는다.
+// csa가 어디서 뜨든 같은 자리를 보아야 한다.
+func findNft() (string, error) {
+	if p, err := exec.LookPath("nft"); err == nil {
+		return p, nil
+	}
+	for _, p := range []string{"/usr/sbin/nft", "/sbin/nft", "/usr/local/sbin/nft"} {
+		if st, err := os.Stat(p); err == nil && st.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("nft를 찾지 못했다. nftables를 설치하거나" +
+		" csa.toml에 guard.mode = \"off\"를 두라")
 }
 
 func New(logf func(string, ...any)) *Guard {
@@ -162,11 +180,12 @@ func (g *Guard) Apply(c Config) error {
 			" 이 머신의 서비스 포트는 터널 밖에서도 열려 있습니다.")
 		return nil
 	}
-	if _, err := exec.LookPath("nft"); err != nil {
-		return fmt.Errorf("nft를 찾지 못했다. nftables를 설치하거나" +
-			" csa.toml에 guard.mode = \"off\"를 두라")
+	nft, err := findNft()
+	if err != nil {
+		return err
 	}
-	cmd := exec.Command("nft", "-f", "-")
+	g.nft = nft
+	cmd := exec.Command(nft, "-f", "-")
 	cmd.Stdin = strings.NewReader(Ruleset(c))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("직통 경로를 닫지 못했다: %v (%s)", err, strings.TrimSpace(string(out)))
@@ -222,7 +241,7 @@ func (g *Guard) Close() {
 	if g == nil || !g.on {
 		return
 	}
-	out, err := exec.Command("nft", "delete", "table", "inet", tableName).CombinedOutput()
+	out, err := exec.Command(g.nft, "delete", "table", "inet", tableName).CombinedOutput()
 	if err != nil {
 		g.logf("직통 경로 규칙을 지우지 못했습니다: %v (%s)", err, strings.TrimSpace(string(out)))
 		return
@@ -239,7 +258,7 @@ func (g *Guard) Blocked() uint64 {
 	if g == nil || !g.on {
 		return 0
 	}
-	out, err := exec.Command("nft", "-j", "list", "counter", "inet", tableName, counterName).Output()
+	out, err := exec.Command(g.nft, "-j", "list", "counter", "inet", tableName, counterName).Output()
 	if err != nil {
 		return 0
 	}
