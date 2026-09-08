@@ -220,9 +220,9 @@ func (c *Config) checkPolicy() []string {
 
 // checkKeyPair는 개인키에서 공개키를 끌어내 peers.toml의 자기 항목과 견준다.
 //
-// 둘이 다르면 이 머신의 검사는 통과하지만 다른 머신이 기대하는 신원과 이 csa의
-// 키가 달라 아무와도 세션을 맺지 못한다. 막히는 것이 아니라 통하지 않는 잘못이고,
-// 운영자가 까닭을 찾기 매우 어렵다.
+// 이 검사가 없으면 다른 검사가 모두 통과해 csa가 뜨고서도, 다른 머신이 기대하는
+// 신원과 이 csa의 키가 달라 아무와도 세션을 맺지 못한다. 막히는 것이 아니라
+// 통하지 않는 잘못이고, 운영자가 까닭을 찾기 매우 어렵다. 그래서 여기서 잡는다.
 func (c *Config) checkKeyPair() []string {
 	self := c.Find(c.Self.PeerID)
 	if self == nil || c.Self.PrivateKey == "" {

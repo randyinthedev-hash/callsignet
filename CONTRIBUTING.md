@@ -20,7 +20,7 @@ Go 1.26 이상이 필요하다. csa는 리눅스에서만 돈다. TUN 인터페�
 | macOS | 안 된다 | `internal/wgdev`을 뺀 나머지가 돈다 | 안 된다 |
 | Windows | 안 된다 | 확인하지 않았다 | 안 된다 |
 
-csa는 커널과 닿는 부분을 리눅스에서만 만든다. 그래서 다른 운영체제에서는 `cmd/csa`가 빌드되지 않는다. macOS에서 순수한 판단만 고쳤다면 그 꾸러미의 시험은 거기서 돌릴 수 있다.
+csa는 커널과 닿는 부분을 리눅스에서만 만든다. 그래서 다른 운영체제에서는 `cmd/csa`가 빌드되지 않는다. `make test`는 `go vet ./...`을 먼저 돌리므로 macOS에서 그 자리에서 실패한다. macOS에서 순수한 판단만 고쳤다면 꾸러미를 골라 시험을 돌린다.
 
 ```bash
 go test ./internal/config/ ./internal/policy/ ./internal/name/ ./internal/guard/ ./internal/control/
