@@ -41,12 +41,15 @@ type PeerStatus struct {
 // 고정할 수 있게 하려는 것이다.
 func Format(s Status, now time.Time) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "csa %s가 돕니다. 기동한 지 %s 지났습니다.\n", s.PeerID, span(now.Sub(s.Since)))
-	fmt.Fprintf(&b, "인터페이스 %s, 터널 IP %s, 도메인 %s\n", s.Iface, s.TunnelIP, s.Domain)
-	fmt.Fprintf(&b, "이름 해석 관리 주체는 %s입니다.\n", s.Resolver)
+	// 변수 뒤에 조사를 붙이지 않는다. peer-id도 이름 해석 갈래도 값에 따라
+	// 조사가 달라지는데 그 값을 미리 알 수 없다.
+	fmt.Fprintf(&b, "csa가 돕니다. 기동한 지 %s 지났습니다.\n", span(now.Sub(s.Since)))
+	fmt.Fprintf(&b, "peer-id %s, 인터페이스 %s, 터널 IP %s, 도메인 %s\n",
+		s.PeerID, s.Iface, s.TunnelIP, s.Domain)
+	fmt.Fprintf(&b, "이름 해석 자리를 차지한 방법: %s\n", s.Resolver)
 	fmt.Fprintf(&b, "MTU %d, TCP MSS 한도 %d바이트입니다. 지금까지 깎은 횟수 %d번입니다.\n",
 		s.MTU, s.MaxMSS, s.Clamped)
-	fmt.Fprintf(&b, "직통 경로는 %s입니다. 지금까지 막은 패킷 %d개입니다.\n\n",
+	fmt.Fprintf(&b, "직통 경로를 닫는 방법: %s. 지금까지 막은 패킷 %d개입니다.\n\n",
 		s.Guard, s.GuardBlocked)
 
 	if len(s.Peers) == 0 {

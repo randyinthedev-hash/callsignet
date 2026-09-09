@@ -182,7 +182,7 @@ ip netns exec "$NS_A" ip -brief addr show cs0 || true
 ip netns exec "$NS_B" ip -brief addr show cs0 || true
 
 echo
-echo "== $WG_A 에서 $WG_B 로 ping"
+echo "== 터널 IP로 ping ($WG_A -> $WG_B)"
 # 두 csa가 같은 순간에 뜨면 둘 다 handshake를 건다. 그러면 각자 상대의 응답을
 # 받을 자리를 이미 응답 상태로 덮어써서 첫 시도가 어긋난다. wg가 몇 초 뒤에
 # 다시 걸어 세션이 서므로 45초까지 기다린다. 17초가 걸린 적이 있다.
@@ -725,9 +725,9 @@ TOML
     sleep 0.5
     after=$("$CSA" status -c "$WORK/a" -json | sed -n 's/.*"mss-clamped":\([0-9]*\).*/\1/p')
     if [ "${after:-0}" -gt "${before:-0}" ]; then
-      printf '  ok    %s\n' "크게 알리는 MSS를 깎는다 ($before -> $after)"
+      printf '  ok    %s\n' "크게 알리는 MSS를 깎는다 (깎은 횟수 $before -> $after)"
     else
-      printf '  틀림  %s\n' "깎지 않았다 ($before -> $after)"; MT_OK=0
+      printf '  틀림  %s\n' "깎지 않았다 (깎은 횟수 $before -> $after)"; MT_OK=0
     fi
     if grep -q "TCP 최대 세그먼트 크기를 깎았습니다.*1380바이트" "$WORK/a/csa.log"; then
       printf '  ok    %s\n' "처음 깎을 때 한 번 적는다"
@@ -777,7 +777,7 @@ for p in st['peers']:
     sleep 1.5
     got=$(peer_field "$WORK/b" srv-a endpoint)
     if [ "$got" = "$IP_A2:$PORT" ]; then
-      printf '  ok    %s\n' "자리를 옮기면 관측한 출발지가 따라간다 ($IP_A -> $got)"
+      printf '  ok    %s\n' "자리를 옮기면 관측한 출발지가 따라간다 ($IP_A:$PORT -> $got)"
     else
       printf '  틀림  %s\n' "옛 자리를 그대로 들고 있다: ${got:-없음}"; LG_OK=0
     fi
