@@ -163,7 +163,7 @@ expires    = "2026-12-31"
 
 csa는 설정을 읽고 어긋난 곳을 모두 찾는다. 하나를 찾고 멈추지 않는다. 운영자가 한 번에 고칠 수 있게 하려는 것이다. 하나라도 어긋나면 기동하지 않고 무엇이 어긋났는지 모두 적는다.
 
-주요한 것은 이렇다. `csa.toml`의 `peer-id`가 `peers.toml`에 있는가. 터널 IP가 peer 사이에 겹치지 않는가. 모든 터널 IP가 `tunnel-cidr` 안에 있는가. `tunnel-cidr`가 이 머신이 이미 쓰는 대역과 겹치지 않는가. 공개키가 두 peer에 겹쳐 나타나지 않는가. `policy.toml`이 가리키는 peer-id와 app이 `peers.toml`에 있는가. `allow-cidr`를 쓴 규칙에 만료 기한이 있고 그것이 아직 지나지 않았는가. 포트와 MTU가 범위 안인가. `dns.listen`과 `guard.mode`를 읽을 수 있는가. 한 peer 안에서 서비스 포트가 겹치지 않는가. `psk.mode`가 `required`인데 없는 키가 있지 않은가.
+주요한 것은 이렇다. `csa.toml`의 `peer-id`가 `peers.toml`에 있는가. 터널 IP가 peer 사이에 겹치지 않는가. 모든 터널 IP가 `tunnel-cidr` 안에 있는가. `tunnel-cidr`와 터널 IP가 IPv4인가. 공개키를 base64로 읽을 수 있고 32바이트인가. `tunnel-cidr`가 이 머신이 이미 쓰는 대역과 겹치지 않는가. 공개키가 두 peer에 겹쳐 나타나지 않는가. 겹치는지는 적은 모양이 아니라 읽어 낸 값으로 본다. `policy.toml`이 가리키는 peer-id와 app이 `peers.toml`에 있는가. `allow-cidr`를 쓴 규칙에 만료 기한이 있고 그것이 아직 지나지 않았는가. 포트와 MTU가 범위 안인가. `dns.listen`과 `guard.mode`를 읽을 수 있는가. 한 peer 안에서 서비스 포트가 겹치지 않는가. `psk.mode`가 `required`인데 없는 키가 있지 않은가.
 
 `csa.toml`이 가리키는 개인키에서 공개키를 끌어내 `peers.toml`의 자기 항목과 견주는 것도 여기서 한다. 둘이 다르면 csa는 기동하지 않는다. 이 검사가 없으면 다른 검사가 모두 통과해 csa가 뜨고서도 아무와도 세션을 맺지 못한다. 막히는 것이 아니라 통하지 않는 잘못이고, 운영자가 까닭을 찾기 매우 어렵다. 그래서 검사로 잡는다.
 

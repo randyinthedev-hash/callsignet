@@ -55,6 +55,13 @@ func (c *Config) checkSelf() []string {
 		p = append(p, fmt.Sprintf("tunnel-cidr를 읽을 수 없다: %s", s.TunnelCIDR))
 		return p
 	}
+	// csa는 터널 인터페이스에 IPv4 주소를 붙이고 경로도 IPv4로 넣는다. IPv6
+	// 패킷은 읽지 않고 버린다. 상대의 접속 주소는 IPv6도 된다. 그것은 wg가
+	// 바깥에서 쓰는 주소이고 터널 안의 주소가 아니다.
+	if !cidr.Addr().Is4() {
+		p = append(p, fmt.Sprintf("tunnel-cidr는 IPv4여야 한다: %s", s.TunnelCIDR))
+		return p
+	}
 	// 이 머신이 이미 쓰는 대역과 겹치면 원래 가던 트래픽이 터널로 들어간다.
 	for _, local := range localPrefixes(s.TunName()) {
 		if cidr.Overlaps(local) {
@@ -83,6 +90,20 @@ func checkGuard(g Guard) []string {
 	return p
 }
 
+// publicKey는 적어 둔 공개키를 읽어 다듬은 모양으로 돌려준다. csa가 wg에 설정을
+// 넣을 때 같은 것을 하는데, 그때 실패하면 이미 기동한 뒤라 운영자가 까닭을 찾기
+// 어렵다. 그래서 설정 검사에서 먼저 본다.
+func publicKey(b64 string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil {
+		return "", fmt.Errorf("base64가 아니다: %s", b64)
+	}
+	if len(raw) != 32 {
+		return "", fmt.Errorf("길이가 32바이트가 아니다: %d", len(raw))
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
 func (c *Config) checkPeers() []string {
 	var p []string
 	if len(c.Peers) == 0 {
@@ -103,12 +124,19 @@ func (c *Config) checkPeers() []string {
 		}
 		seenID[peer.PeerID] = true
 
-		if peer.PublicKey == "" {
+		// 공개키는 읽어 낸 값으로 견준다. 앞뒤 공백처럼 적은 모양만 다른 같은
+		// 키를 문자열로 견주면 서로 다른 키로 본다.
+		switch key, err := publicKey(peer.PublicKey); {
+		case peer.PublicKey == "":
 			p = append(p, fmt.Sprintf("%s에 public-key가 없다", peer.PeerID))
-		} else if other, dup := seenKey[peer.PublicKey]; dup {
-			p = append(p, fmt.Sprintf("같은 공개키가 두 peer에 나타난다: %s, %s", other, peer.PeerID))
-		} else {
-			seenKey[peer.PublicKey] = peer.PeerID
+		case err != nil:
+			p = append(p, fmt.Sprintf("public-key를 읽을 수 없다: %s의 %v", peer.PeerID, err))
+		default:
+			if other, dup := seenKey[key]; dup {
+				p = append(p, fmt.Sprintf("같은 공개키가 두 peer에 나타난다: %s, %s", other, peer.PeerID))
+			} else {
+				seenKey[key] = peer.PeerID
+			}
 		}
 
 		ip, err := netip.ParseAddr(peer.TunnelIP)
@@ -120,6 +148,9 @@ func (c *Config) checkPeers() []string {
 				p = append(p, fmt.Sprintf("터널 IP가 겹친다: %s (%s, %s)", peer.TunnelIP, other, peer.PeerID))
 			} else {
 				seenIP[peer.TunnelIP] = peer.PeerID
+			}
+			if !ip.Is4() {
+				p = append(p, fmt.Sprintf("tunnel-ip는 IPv4여야 한다: %s의 %s", peer.PeerID, peer.TunnelIP))
 			}
 			if cidrOK == nil && !cidr.Contains(ip) {
 				p = append(p, fmt.Sprintf("터널 IP가 tunnel-cidr 밖이다: %s의 %s (cidr %s)", peer.PeerID, ip, cidr))
