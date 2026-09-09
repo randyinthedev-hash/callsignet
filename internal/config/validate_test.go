@@ -59,6 +59,16 @@ func TestGoodConfigHasNoProblem(t *testing.T) {
 	}
 }
 
+// TestIPv6접속주소는받는다는 터널 안과 밖의 경계를 못박는다. 터널 IP는 IPv4만
+// 되지만 상대의 접속 주소는 IPv6도 된다. wg가 그 위에서 돌기 때문이다.
+func TestIPv6접속주소는받는다(t *testing.T) {
+	c := good(t)
+	c.Peers[1].Endpoints = []string{"[2001:db8::2]:51820"}
+	if p := c.Validate(); len(p) != 0 {
+		t.Fatalf("IPv6 접속 주소를 거절했다: %v", p)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	cases := []struct {
 		name string
