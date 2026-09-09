@@ -1,0 +1,45 @@
+# 밀 때마다 단위 시험과 통합 시험을 돌린다.
+#
+# VM 시험은 여기서 돌리지 않는다. libvirt로 실제 VM을 띄우는데 러너 안에서는
+# 중첩 가상화가 되지 않는다. 그것은 사람이 손으로 돌린다.
+name: 시험
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  단위:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make test
+
+  통합:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # csa는 nftables로 직통 경로를 닫고, 시험은 dig로 이름 해석을 확인한다.
+      - name: 준비물을 설치한다
+        run: sudo apt-get update -qq && sudo apt-get install -yqq nftables dnsutils
+
+      # 러너에 도커가 있으면 br_netfilter가 올라와 브리지로 오가는 패킷이
+      # iptables의 FORWARD를 지난다. 그 사슬이 기본으로 DROP이면 네임스페이스
+      # 둘이 서로 닿지 못한다. 시험이 만드는 브리지에만 걸리는 문제다.
+      - name: 브리지로 오가는 패킷을 막지 않게 한다
+        run: |
+          sudo modprobe br_netfilter || true
+          sudo sysctl -w net.bridge.bridge-nf-call-iptables=0 || true
+          sudo iptables -P FORWARD ACCEPT || true
+
+      - name: 통합 시험을 돌린다
+        run: sudo make tunnel
