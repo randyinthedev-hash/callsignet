@@ -87,7 +87,7 @@ if ! ip netns exec "$NS_A" ping -c 2 -W 2 "$IP_B" >/dev/null 2>&1; then
   echo "  iptables -L FORWARD -n | head -3" >&2
   exit 1
 fi
-echo "언더레이 확인"
+echo "언더레이를 확인했습니다."
 
 echo "== 키와 설정"
 PUB_A=$("$CSA" genkey -o "$WORK/a/private.key" | sed -n 's/^공개키: //p')
@@ -259,7 +259,7 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
   echo "== 이름으로 ping"
   if ip netns exec "$NS_A" ping -c 2 -W 2 "$APP_B.srv-b.cs.test.internal"; then
     echo
-    echo "확인됨. 앱이 이름으로 부르고 csa 둘이 터널로 나른다."
+    echo "확인했습니다. 앱이 이름으로 부르고 csa 둘이 터널로 나릅니다."
 
     echo
     echo "== TCP 연결"
@@ -456,7 +456,7 @@ PYREJECT
     [ "$POL_OK" = 1 ] || { echo; echo "--- a의 로그 ---"; grep 막았습니다 "$WORK/a/csa.log" || true
                            echo "--- b의 로그 ---"; grep 막았습니다 "$WORK/b/csa.log" || true; exit 1; }
     echo
-    echo "확인됨. 받는 쪽이 최종 판단을 한다."
+    echo "확인했습니다. 받는 쪽이 최종 판단을 합니다."
 
     echo
     echo "== 상태"
@@ -617,14 +617,14 @@ TOML
     kill "$RV_SRV" 2>/dev/null || true
 
     if grep -q "^첫째 echo:first" "$WORK/revoke.out"; then
-      printf '  ok    %s\n' "거두기 전에는 오간다"
+      printf '  ok    %s\n' "철회하기 전에는 오간다"
     else
-      printf '  틀림  %s\n' "거두기 전부터 오가지 못한다"; sed 's/^/        /' "$WORK/revoke.out"; RV_OK=0
+      printf '  틀림  %s\n' "철회하기 전부터 오가지 못한다"; sed 's/^/        /' "$WORK/revoke.out"; RV_OK=0
     fi
     if grep -q "^밀어 준 것 막힘\|^밀어 준 것 연결이 닫혔다" "$WORK/revoke.out"; then
-      printf '  ok    %s\n' "거둔 뒤에는 받는 쪽이 미는 것도 막힌다"
+      printf '  ok    %s\n' "철회한 뒤에는 받는 쪽이 미는 것도 막힌다"
     else
-      printf '  틀림  %s\n' "거두었는데 받는 쪽이 미는 것이 앱에 닿는다"; sed 's/^/        /' "$WORK/revoke.out"; RV_OK=0
+      printf '  틀림  %s\n' "철회했는데 받는 쪽이 미는 것이 앱에 닿는다"; sed 's/^/        /' "$WORK/revoke.out"; RV_OK=0
     fi
     if grep -q "정책이 바뀌어 들여 둔 연결" "$WORK/b/csa.log"; then
       printf '  ok    %s\n' "잊은 연결이 몇 개인지 적는다"
@@ -685,7 +685,7 @@ TOML
       printf '  틀림  %s\n' "막았다면서 앱에 넘겼다"; BD_OK=0
     fi
     if grep -q "허용 대역 밖에서 왔다.*관측한 출발지 $IP_A" "$WORK/b/csa.log"; then
-      printf '  ok    %s\n' "까닭에 관측한 출발지가 남는다"
+      printf '  ok    %s\n' "막은 까닭에 관측한 출발지가 남는다"
     else
       printf '  틀림  %s\n' "관측한 출발지를 적지 않는다"
       grep "허용 대역" "$WORK/b/csa.log" | tail -3 | sed 's/^/        /'; BD_OK=0
@@ -831,7 +831,7 @@ for p in st['peers']:
     fi
 
     echo
-    echo "== 문 하나 모드"
+    echo "== 예외 말고 모두 닫는 모드"
     # 앞 절에서 csa 둘을 멈췄다. srv-b의 csa를 다른 모드로 다시 띄운다.
     # 이 모드는 csa.toml에서 정하므로 csa reload로는 바꿀 수 없다.
     OD_OK=1

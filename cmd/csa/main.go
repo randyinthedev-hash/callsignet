@@ -84,7 +84,7 @@ func runCheck(args []string) error {
 	}
 	problems := cfg.Validate()
 	if len(problems) == 0 {
-		fmt.Printf("설정을 확인했습니다. peer %d개, 서비스 %d개입니다.\n",
+		fmt.Printf("설정을 확인했습니다. 상대 %d개, 서비스 %d개입니다.\n",
 			len(cfg.Peers), countServices(cfg))
 		return nil
 	}
