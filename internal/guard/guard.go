@@ -78,7 +78,7 @@ type Config struct {
 	KeepUDP []int
 }
 
-// Ruleset은 nft에게 줄 규칙 글을 만든다.
+// Ruleset은 nft에 줄 규칙 글을 만든다.
 //
 // 앞의 두 줄은 앞서 돌던 csa가 남긴 표를 지우려고 둔다. 표가 없으면 만들고
 // 지우므로 어느 경우에도 같은 자리에서 시작한다.

@@ -90,7 +90,7 @@ PUB_C=$("$CSA" genkey -o "$WORK/c-unused.key" | sed -n 's/^공개키: //p')
 # 둔다. srv-a에는 psk/srv-b.key가, srv-b에는 psk/srv-a.key가 놓인다.
 #
 # srv-c의 키도 만든다. 정책에 없는 상대이지만 peers.toml에 있으므로 csa가 wg에
-# 건다. mode가 required이면 그런 상대에게도 키가 있어야 한다.
+# 건다. mode가 required이면 그런 상대에도 키가 있어야 한다.
 mkdir -p "$WORK/a/psk" "$WORK/b/psk"
 "$CSA" genpsk -o "$WORK/a/psk/srv-b.key" >/dev/null
 cp "$WORK/a/psk/srv-b.key" "$WORK/b/psk/srv-a.key"

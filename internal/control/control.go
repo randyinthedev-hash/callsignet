@@ -1,4 +1,4 @@
-// Package control은 도는 csa에게 묻는 통로다.
+// Package control은 도는 csa에 묻는 통로다.
 //
 // csa run이 유닉스 소켓을 하나 열고, csa status가 거기 붙어 묻는다. 물음은 한
 // 줄이고 답은 두 부분이다. 첫 줄이 ok 또는 error이고 그 뒤가 본문이다.
@@ -99,7 +99,7 @@ func (s *Server) serve(c net.Conn) {
 	fmt.Fprintf(c, "ok\n%s", body)
 }
 
-// Ask는 도는 csa에게 물어 답의 본문을 돌려준다.
+// Ask는 도는 csa에 물어 답의 본문을 돌려준다.
 func Ask(peerID, req string) (string, error) {
 	path := SocketPath(peerID)
 	c, err := net.DialTimeout("unix", path, 3*time.Second)

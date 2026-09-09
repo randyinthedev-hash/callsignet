@@ -28,11 +28,11 @@ type Device struct {
 	logf func(string, ...any)
 	// snap은 설정에서 뽑아 둔 값들이다. csa reload가 통째로 갈아 끼운다.
 	snap atomic.Pointer[snapshot]
-	// eps는 wg에게 물어 얻은 상대별 접속 주소를 잠깐 들고 있는 자리다.
+	// eps는 wg에 물어 얻은 상대별 접속 주소를 잠깐 들고 있는 자리다.
 	eps endpoints
 }
 
-// endpointTTL은 wg에게 접속 주소를 다시 묻기까지 기다리는 시간이다.
+// endpointTTL은 wg에 접속 주소를 다시 묻기까지 기다리는 시간이다.
 //
 // 묻는 것이 값싸지 않다. wg가 IpcGet에서 상태 전체를 문자열로 만들어 내놓기
 // 때문이다. IP 대역 규칙은 패킷마다 이 값을 보므로 그때마다 물을 수 없다.
@@ -51,7 +51,7 @@ type endpoints struct {
 // snapshot은 설정에서 미리 뽑아 둔 것이다. 패킷마다 설정을 훑지 않으려고 둔다.
 type snapshot struct {
 	cfg *config.Config
-	// pubOf는 peer-id로 그 상대의 공개키를 찾는다. wg에게 접속 주소를 물을 때 쓴다.
+	// pubOf는 peer-id로 그 상대의 공개키를 찾는다. wg에 접속 주소를 물을 때 쓴다.
 	pubOf map[string]string
 	// known은 등록된 상대의 접속 주소다. 낯선 곳을 가릴 때 쓴다.
 	known map[string]bool
@@ -240,7 +240,7 @@ func (d *Device) Reload(c *config.Config) error {
 // stillAllowed는 들여 둔 연결 하나가 새 정책으로도 허가되는지 본다.
 //
 // 어느 방향을 들인 기억인지는 출발지로 가린다. 출발지가 상대의 터널 IP이면 그
-// 상대에게서 온 것을 들인 기억이고, 목적지가 상대의 터널 IP이면 이 머신이
+// 상대에서 온 것을 들인 기억이고, 목적지가 상대의 터널 IP이면 이 머신이
 // 내보낸 것을 들인 기억이다. 둘 다 아니면 모르는 연결이므로 잊는다.
 func (d *Device) stillAllowed(r *policy.Rules, k flowKey) bool {
 	hasPorts := k.proto == protoTCP || k.proto == protoUDP
@@ -263,7 +263,7 @@ func (d *Device) stillAllowed(r *policy.Rules, k flowKey) bool {
 	return false
 }
 
-// endpointOf는 그 상대에게서 패킷이 실제로 온 주소를 돌려준다. wg가 복호화하면서
+// endpointOf는 그 상대에서 패킷이 실제로 온 주소를 돌려준다. wg가 복호화하면서
 // 짝을 맞춰 둔 값이다. 인증을 통과한 패킷일 때만 갱신되므로 아무나 이 값을 바꿀
 // 수 없다. endpointTTL 동안은 앞서 물어 둔 값을 그대로 쓴다.
 func (d *Device) endpointOf(peerID string) string {
@@ -276,7 +276,7 @@ func (d *Device) endpointOf(peerID string) string {
 	return d.eps.byID[peerID]
 }
 
-// readEndpoints는 wg에게 모든 상대의 접속 주소를 한 번에 묻는다.
+// readEndpoints는 wg에 모든 상대의 접속 주소를 한 번에 묻는다.
 //
 // 앞서 물어 둔 값과 견주어 바뀐 것이 있으면 적는다. 상대가 다른 자리로 옮겨
 // 갔다는 뜻이다. 정책이 IP 대역을 보고 있으면 이때 판단이 달라지므로 운영자가
@@ -309,7 +309,7 @@ func endpointFor(state, pubHex string) string {
 	return parseStatus(state)[pubHex].Endpoint
 }
 
-// Status는 wg에게 상대들의 상태를 물어 peer-id를 붙여 돌려준다. csa status가 쓴다.
+// Status는 wg에 상대들의 상태를 물어 peer-id를 붙여 돌려준다. csa status가 쓴다.
 func (d *Device) Status() map[string]PeerStatus {
 	out := map[string]PeerStatus{}
 	if d.dev == nil {

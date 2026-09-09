@@ -72,9 +72,9 @@ func TestRejectICMP(t *testing.T) {
 	if !ok || p.Proto != protoICMP {
 		t.Fatalf("ICMP가 아니다: %v", p)
 	}
-	// 원래 보낸 쪽에게 돌아가야 한다.
+	// 원래 보낸 쪽에 돌아가야 한다.
 	if p.Dst.String() != "10.91.0.1" {
-		t.Fatalf("보낸 쪽에게 가야 하는데 %s", p.Dst)
+		t.Fatalf("보낸 쪽에 가야 하는데 %s", p.Dst)
 	}
 	// 출발지는 원래 패킷의 목적지다. 이 머신의 주소를 쓰면 출발지와 목적지가
 	// 같아져 rp_filter가 엄격한 머신에서 커널이 버린다.

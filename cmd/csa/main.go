@@ -182,7 +182,7 @@ func runRun(args []string) error {
 	return nil
 }
 
-// statusJSON은 지금 상태를 모아 JSON으로 만든다. 설정에서 오는 값과 wg에게
+// statusJSON은 지금 상태를 모아 JSON으로 만든다. 설정에서 오는 값과 wg에
 // 물은 값을 합친다. peers.toml에 있지만 아직 세션을 맺지 않은 상대도 넣는다.
 // guardConfig는 설정에서 직통 경로 규칙에 필요한 값을 뽑는다. 닫을 포트는
 // peers.toml에 적힌 이 머신의 서비스 포트다.
@@ -315,7 +315,7 @@ func reloadReport(c config.Changes) string {
 	return b.String()
 }
 
-// runReload는 도는 csa에게 설정을 다시 읽으라고 이른다. 다시 읽는 것은 도는
+// runReload는 도는 csa에 설정을 다시 읽으라고 이른다. 다시 읽는 것은 도는
 // csa가 자기가 기동할 때 받은 디렉터리에서 한다. 여기서 주는 -c는 어느 소켓에
 // 붙을지 알아내는 데만 쓴다.
 func runReload(args []string) error {
@@ -335,7 +335,7 @@ func runReload(args []string) error {
 	return nil
 }
 
-// runStatus는 도는 csa에게 물어 상태를 찍는다. 설정 디렉터리를 읽는 것은
+// runStatus는 도는 csa에 물어 상태를 찍는다. 설정 디렉터리를 읽는 것은
 // 어느 소켓에 붙을지 알아내려는 것이다. 소켓 이름이 peer-id에서 온다.
 func runStatus(args []string) error {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)

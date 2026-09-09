@@ -20,7 +20,7 @@ type Takeover struct {
 	logf    func(string, ...any)
 }
 
-// Apply는 내부 도메인 질의가 csa에게 오도록 시스템 설정을 건다.
+// Apply는 내부 도메인 질의가 csa에 오도록 시스템 설정을 건다.
 //
 // 관리 주체를 판별해 거기에 맞춰 건다. systemd-resolved가 관리하면 인터페이스에
 // 도메인을 등록하고, 아무도 관리하지 않으면 /etc/resolv.conf를 직접 고친다.

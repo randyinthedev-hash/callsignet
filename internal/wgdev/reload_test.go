@@ -80,7 +80,7 @@ func TestUAPIReloadUpdatesEndpoint(t *testing.T) {
 	}
 }
 
-// 공개키가 바뀐 상대는 wg에게 다른 상대다. 옛 키를 먼저 지워야 한다.
+// 공개키가 바뀐 상대는 wg에 다른 상대다. 옛 키를 먼저 지워야 한다.
 func TestUAPIReloadReplacesPeerWhenKeyChanged(t *testing.T) {
 	cur := sample()
 	cur.Peers[1].PublicKey = keyC

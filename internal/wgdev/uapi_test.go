@@ -84,7 +84,7 @@ func TestEndpointFor(t *testing.T) {
 	}
 }
 
-// 사전 공유키가 있는 상대에게만 그 줄을 적는다. wg는 그 줄이 없는 상대에게
+// 사전 공유키가 있는 상대에만 그 줄을 적는다. wg는 그 줄이 없는 상대에
 // 0으로 채운 값을 쓰고, 그것은 이 기능을 끈 것과 같다.
 func TestUAPIConfigWritesPSK(t *testing.T) {
 	psk := map[string]string{"srv-b": keyB}
@@ -97,7 +97,7 @@ func TestUAPIConfigWritesPSK(t *testing.T) {
 		t.Errorf("없다: %s\n%s", want, got)
 	}
 	if strings.Count(got, "preshared_key=") != 1 {
-		t.Errorf("키가 있는 상대에게만 적어야 하는데:\n%s", got)
+		t.Errorf("키가 있는 상대에만 적어야 하는데:\n%s", got)
 	}
 	// 공개키 줄 뒤에 와야 그 상대의 것이 된다.
 	if strings.Index(got, "preshared_key=") < strings.Index(got, "public_key=") {

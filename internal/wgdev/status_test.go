@@ -47,7 +47,7 @@ func TestParseStatus(t *testing.T) {
 	}
 
 	// 아직 한 번도 세션을 맺지 않은 상대는 시각이 비어 있어야 한다. wg는 그런
-	// 상대에게 0을 내놓는데, 그것을 1970년으로 읽으면 안 된다.
+	// 상대에 0을 내놓는데, 그것을 1970년으로 읽으면 안 된다.
 	b := got["bbbb000000000000000000000000000000000000000000000000000000000002"]
 	if !b.Handshake.IsZero() {
 		t.Errorf("세션을 맺지 않았으면 시각이 비어야 하는데 %v", b.Handshake)
@@ -58,7 +58,7 @@ func TestParseStatus(t *testing.T) {
 }
 
 // 첫 public_key= 줄보다 앞에 있는 값은 인터페이스 자신의 것이므로 어느
-// 상대에게도 붙지 않아야 한다.
+// 상대에도 붙지 않아야 한다.
 func TestParseStatusDropsInterfaceValues(t *testing.T) {
 	got := parseStatus("listen_port=51820\nfwmark=0\n")
 	if len(got) != 0 {

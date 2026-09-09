@@ -78,7 +78,7 @@ func RejectICMP(orig []byte) []byte {
 	out[8] = 64 // TTL
 	out[9] = protoICMP
 	copy(out[12:16], orig[16:20]) // 원래 패킷의 목적지가 이 응답의 출발지다
-	copy(out[16:20], orig[12:16]) // 원래 보낸 쪽에게 돌려준다
+	copy(out[16:20], orig[12:16]) // 원래 보낸 쪽에 돌려준다
 	binary.BigEndian.PutUint16(out[10:12], checksum(out[:20]))
 	copy(out[20:], icmp)
 	return out

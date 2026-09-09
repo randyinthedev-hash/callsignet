@@ -9,7 +9,7 @@ import (
 // PeerStatus는 wg가 그 상대 하나에 대해 알고 있는 것이다.
 type PeerStatus struct {
 	PublicKey string // 16진수
-	Endpoint  string // 그 상대에게서 패킷이 실제로 온 주소
+	Endpoint  string // 그 상대에서 패킷이 실제로 온 주소
 	Handshake time.Time
 	RxBytes   int64
 	TxBytes   int64

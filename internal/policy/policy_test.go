@@ -63,10 +63,10 @@ func TestOutbound(t *testing.T) {
 	}
 	// 정책에 없는 상대다.
 	if d := r.Outbound(addr("10.91.0.3"), 7070); d.Allow {
-		t.Fatal("정책에 없는 상대에게 나가게 했다")
+		t.Fatal("정책에 없는 상대에 나가게 했다")
 	}
 	if d := r.Outbound(addr("10.91.0.9"), 80); d.Allow {
-		t.Fatal("모르는 상대에게 나가게 했다")
+		t.Fatal("모르는 상대에 나가게 했다")
 	}
 }
 
@@ -86,14 +86,14 @@ func TestICMPFollowsPolicy(t *testing.T) {
 	r := rules(t)
 	// srv-b와는 서로 통신할 권한이 있으므로 진단도 된다.
 	if d := r.OutboundICMP(addr("10.91.0.2")); !d.Allow {
-		t.Errorf("허가된 상대에게 막았다: %s", d.Reason)
+		t.Errorf("허가된 상대에 막았다: %s", d.Reason)
 	}
 	if d := r.InboundICMP(addr("10.91.0.2"), netip.Addr{}); !d.Allow {
 		t.Errorf("허가된 상대를 막았다: %s", d.Reason)
 	}
 	// srv-c와는 아무 권한이 없다.
 	if d := r.OutboundICMP(addr("10.91.0.3")); d.Allow {
-		t.Error("권한 없는 상대에게 나가게 했다")
+		t.Error("권한 없는 상대에 나가게 했다")
 	}
 	if d := r.InboundICMP(addr("10.91.0.3"), netip.Addr{}); d.Allow {
 		t.Error("권한 없는 상대를 들였다")
@@ -224,7 +224,7 @@ func TestExpiredRuleLetsNobodyIn(t *testing.T) {
 	}
 }
 
-// 대역을 보지 않는 규칙만 있으면 wg에게 출발지를 묻지 않는다.
+// 대역을 보지 않는 규칙만 있으면 wg에 출발지를 묻지 않는다.
 func TestNeedsSourceOnlyWhenBandExists(t *testing.T) {
 	r := rules(t)
 	if r.NeedsSource(8080) || r.NeedsSourceICMP() {

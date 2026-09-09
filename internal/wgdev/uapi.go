@@ -38,7 +38,7 @@ func UAPIConfig(c *config.Config, privateKeyB64 string, psk map[string]string) (
 		}
 		fmt.Fprintf(&b, "public_key=%s\n", pub)
 		b.WriteString("replace_allowed_ips=true\n")
-		// 허용 IP는 그 상대에게 배정된 터널 IP 하나뿐이다. 이 값이 받는 쪽에서
+		// 허용 IP는 그 상대에 배정된 터널 IP 하나뿐이다. 이 값이 받는 쪽에서
 		// 상대를 확정하는 근거가 된다.
 		fmt.Fprintf(&b, "allowed_ip=%s/32\n", peer.TunnelIP)
 		if err := writePSK(&b, psk[peer.PeerID], peer.PeerID); err != nil {
@@ -53,7 +53,7 @@ func UAPIConfig(c *config.Config, privateKeyB64 string, psk map[string]string) (
 }
 
 // writePSK는 그 상대의 사전 공유키를 적는다. 키가 없으면 아무것도 적지 않는다.
-// wg는 사전 공유키를 적지 않은 상대에게는 0으로 채운 값을 쓰고, 그것은 이
+// wg는 사전 공유키를 적지 않은 상대에는 0으로 채운 값을 쓰고, 그것은 이
 // 기능을 끈 것과 같다.
 func writePSK(b *strings.Builder, keyB64, peerID string) error {
 	if keyB64 == "" {
@@ -85,7 +85,7 @@ func keyToHex(b64 string) (string, error) {
 // wg가 들고 있던 관측한 주소를 peers.toml에 적힌 값으로 되돌린다. 상대가 다른
 // 자리로 옮겨 갔으면 그 자리를 잃는다.
 //
-// 공개키가 바뀐 상대는 wg에게 다른 상대다. 옛 키를 지우고 새 키를 넣는다.
+// 공개키가 바뀐 상대는 wg에 다른 상대다. 옛 키를 지우고 새 키를 넣는다.
 func UAPIReload(old, cur *config.Config, oldPSK, curPSK map[string]string) (string, error) {
 	oldByID := peersByID(old)
 	curByID := peersByID(cur)
@@ -151,7 +151,7 @@ func peersByID(c *config.Config) map[string]config.Peer {
 	return m
 }
 
-// sameEndpoint는 wg에게 거는 접속 주소가 같은지 본다. wg는 첫 주소만 쓴다.
+// sameEndpoint는 wg에 거는 접속 주소가 같은지 본다. wg는 첫 주소만 쓴다.
 func sameEndpoint(a, b []string) bool {
 	first := func(s []string) string {
 		if len(s) == 0 {

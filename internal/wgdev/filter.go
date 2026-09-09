@@ -176,7 +176,7 @@ func (f *filter) peerName(r *policy.Rules, ip netip.Addr) string {
 	return ip.String()
 }
 
-// observedAddr는 그 상대에게서 패킷이 실제로 온 주소를 돌려준다. 포트는 뗀다.
+// observedAddr는 그 상대에서 패킷이 실제로 온 주소를 돌려준다. 포트는 뗀다.
 // IP 대역 규칙이 재는 값이 이것이다. 대역을 보는 규칙이 있는 포트일 때만 부른다.
 func (f *filter) observedAddr(r *policy.Rules, ip netip.Addr) netip.Addr {
 	id, ok := r.PeerOf(ip)
@@ -190,7 +190,7 @@ func (f *filter) observedAddr(r *policy.Rules, ip netip.Addr) netip.Addr {
 	return ap.Addr().Unmap()
 }
 
-// observed는 그 상대에게서 패킷이 실제로 온 주소를 기록에 적을 모습으로
+// observed는 그 상대에서 패킷이 실제로 온 주소를 기록에 적을 모습으로
 // 돌려준다. 포트를 붙인 채로 적는다.
 func (f *filter) observed(r *policy.Rules, ip netip.Addr) string {
 	id, ok := r.PeerOf(ip)

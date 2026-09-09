@@ -26,14 +26,14 @@ type Rules struct {
 	// allInbound는 포트를 가리지 않은 규칙 전부다. 포트가 없는 ICMP에 쓴다.
 	allInbound []*rule
 	// needSource는 그 포트의 규칙이 관측한 출발지를 보는지 알려 준다. 보지
-	// 않아도 되면 wg에게 묻지 않는다.
+	// 않아도 되면 wg에 묻지 않는다.
 	needSource     map[uint16]bool
 	needSourceICMP bool
 	// appByPort는 이 머신의 포트가 어느 앱인지 알려 준다. 기록에 쓴다.
 	appByPort map[uint16]string
 	// outbound는 이 머신이 붙어도 되는 상대다. 터널 IP와 포트의 쌍.
 	outbound map[target]bool
-	// outboundPeers는 그 상대에게 붙을 권한이 하나라도 있는지 알려 준다.
+	// outboundPeers는 그 상대에 붙을 권한이 하나라도 있는지 알려 준다.
 	// 포트가 없는 ICMP를 판단할 때 쓴다.
 	outboundPeers map[netip.Addr]bool
 }
@@ -48,7 +48,7 @@ type rule struct {
 	// peers는 들일 상대다. 비어 있으면 상대를 가리지 않는다.
 	peers map[string]bool
 	// cidrs는 들일 출발지 대역이다. 비어 있으면 대역을 가리지 않는다. 여기서
-	// 재는 것은 터널 IP가 아니라 csa가 wg에게 물어 얻은 바깥 출발지다.
+	// 재는 것은 터널 IP가 아니라 csa가 wg에 물어 얻은 바깥 출발지다.
 	cidrs []netip.Prefix
 	// expires는 이 규칙이 죽는 날이다. 그날 0시에 죽는다. 비어 있으면 죽지 않는다.
 	expires time.Time
@@ -181,7 +181,7 @@ func New(c *config.Config) (*Rules, error) {
 }
 
 // NeedsSource는 그 포트의 규칙이 관측한 출발지를 보는지 알려 준다. csa는 참일
-// 때만 wg에게 출발지를 묻는다. 묻는 것이 값싸지 않기 때문이다.
+// 때만 wg에 출발지를 묻는다. 묻는 것이 값싸지 않기 때문이다.
 func (r *Rules) NeedsSource(dstPort uint16) bool { return r.needSource[dstPort] }
 
 // NeedsSourceICMP는 ICMP를 판단할 때 관측한 출발지가 필요한지 알려 준다.
@@ -199,7 +199,7 @@ func (r *Rules) Inbound(src netip.Addr, dstPort uint16, from netip.Addr) Decisio
 	}
 	rules, ok := r.inbound[dstPort]
 	if !ok {
-		return Decision{false, fmt.Sprintf("%s에게 열어 둔 포트가 아니다: %d", id, dstPort)}
+		return Decision{false, fmt.Sprintf("%s에 열어 둔 포트가 아니다: %d", id, dstPort)}
 	}
 	for _, u := range rules {
 		if u.allows(id, from) {

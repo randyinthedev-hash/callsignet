@@ -17,7 +17,7 @@ const (
 	// csa가 /etc/resolv.conf를 직접 고친다.
 	ManagerFile Manager = iota
 	// ManagerResolved는 systemd-resolved가 관리하는 경우다. csa가 내부 도메인만
-	// 자기에게 보내도록 등록한다.
+	// 자기로 보내도록 등록한다.
 	ManagerResolved
 )
 
@@ -114,7 +114,7 @@ func upstreams(content string) []string {
 
 // ResolvedArgs는 systemd-resolved에 걸 명령의 인자를 만든다.
 //
-// 내부 도메인만 csa에게 보낸다. 역방향 구역도 함께 등록해야 한다. 역방향
+// 내부 도메인만 csa에 보낸다. 역방향 구역도 함께 등록해야 한다. 역방향
 // 질의는 내부 도메인이 아니라 in-addr.arpa 구역으로 가기 때문이다.
 func ResolvedArgs(iface, listenIP, domain, revZone string) [][]string {
 	return [][]string{
