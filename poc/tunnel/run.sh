@@ -576,7 +576,7 @@ s.bind(('$WG_B', 8080))
 s.listen(1)
 c, _ = s.accept()
 c.sendall(b'echo:' + c.recv(64))
-time.sleep(6)          # 이 사이에 하네스가 정책을 거둔다
+time.sleep(6)          # 이 사이에 시험 스크립트가 정책을 거둔다
 c.sendall(b'push\n')   # 거둔 뒤에 서버가 먼저 민다
 time.sleep(5)
 " > "$WORK/b/revoke-srv.out" 2>&1 & RV_SRV=$!
