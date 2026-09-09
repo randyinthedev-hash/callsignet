@@ -350,7 +350,7 @@ serve(9999)
 
     echo
     echo "== 거절 응답"
-    # csa가 나가는 연결을 막을 때 앱에게 ICMP로 알린다. 앱이 연결 시간을 다
+    # csa가 나가는 연결을 막을 때 앱에 ICMP로 알린다. 앱이 연결 시간을 다
     # 기다리지 않고 곧바로 실패를 보아야 한다. 조용히 버리면 그것을 확인할 수 없다.
     if ! ip netns exec "$NS_A" python3 - "$WG_B" "$WG_C" <<'PYREJECT'
 import errno
@@ -390,7 +390,7 @@ def dial(addr, port):
 why, took = dial(wg_c, 8080)
 check(why == "EHOSTUNREACH",
       "정책에 없는 상대에 붙으면 곧바로 실패한다",
-      "거절이 앱에게 닿지 않았다: %s" % why)
+      "거절이 앱에 닿지 않았다: %s" % why)
 check(took < 1.0,
       "기다리지 않고 실패한다 (%.2f초)" % took,
       "연결 시간을 다 기다렸다 (%.2f초)" % took)
@@ -399,7 +399,7 @@ check(took < 1.0,
 why, took = dial(wg_b, 9090)
 check(why == "EHOSTUNREACH",
       "정책에 없는 포트에 붙으면 곧바로 실패한다",
-      "거절이 앱에게 닿지 않았다: %s" % why)
+      "거절이 앱에 닿지 않았다: %s" % why)
 
 # 허가된 곳이다. 듣는 앱이 없으므로 상대 커널이 거절한다. csa의 거절과 달라야
 # 한다. 같으면 무엇 때문에 실패했는지 앱이 가릴 수 없다.
@@ -672,9 +672,9 @@ TOML
       printf '  틀림  %s\n' "대역 밖인데 막지 않는다"; BD_OK=0
     fi
     if [ "$(count_b "들어온 연결을 받았습니다.*:$PORT_SECRET")" -eq "$before" ]; then
-      printf '  ok    %s\n' "막힌 연결은 앱에게 가지 않는다"
+      printf '  ok    %s\n' "막힌 연결은 앱에 가지 않는다"
     else
-      printf '  틀림  %s\n' "막았다면서 앱에게 넘겼다"; BD_OK=0
+      printf '  틀림  %s\n' "막았다면서 앱에 넘겼다"; BD_OK=0
     fi
     if grep -q "허용 대역 밖에서 왔다.*관측한 출발지 $IP_A" "$WORK/b/csa.log"; then
       printf '  ok    %s\n' "까닭에 관측한 출발지가 남는다"

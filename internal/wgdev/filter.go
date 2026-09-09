@@ -37,7 +37,7 @@ type filter struct {
 	observe func(peerID string) string
 }
 
-// Read는 앱이 보낸 패킷을 읽어 정책에 없는 것을 버린다. 버릴 때는 앱에게
+// Read는 앱이 보낸 패킷을 읽어 정책에 없는 것을 버린다. 버릴 때는 앱에
 // 거절을 알린다.
 func (f *filter) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	n, err := f.Device.Read(bufs, sizes, offset)
@@ -61,7 +61,7 @@ func (f *filter) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 	return kept, nil
 }
 
-// Write는 복호화한 패킷을 앱에게 넘기기 전에 정책을 본다. 통과한 것만 쓴다.
+// Write는 복호화한 패킷을 앱에 넘기기 전에 정책을 본다. 통과한 것만 쓴다.
 func (f *filter) Write(bufs [][]byte, offset int) (int, error) {
 	keep := make([][]byte, 0, len(bufs))
 	for _, b := range bufs {
@@ -210,7 +210,7 @@ func portName(p policy.Packet) string {
 	return fmt.Sprintf("%s(포트 없음)", p.Dst)
 }
 
-// reject는 앱에게 거절을 알린다. 감싼 인터페이스에 바로 쓰므로 다시 걸러지지
+// reject는 앱에 거절을 알린다. 감싼 인터페이스에 바로 쓰므로 다시 걸러지지
 // 않는다.
 func (f *filter) reject(pkt []byte, d policy.Decision) {
 	icmp := policy.RejectICMP(pkt)

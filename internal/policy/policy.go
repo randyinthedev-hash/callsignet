@@ -187,7 +187,7 @@ func (r *Rules) NeedsSource(dstPort uint16) bool { return r.needSource[dstPort] 
 // NeedsSourceICMP는 ICMP를 판단할 때 관측한 출발지가 필요한지 알려 준다.
 func (r *Rules) NeedsSourceICMP() bool { return r.needSourceICMP }
 
-// Inbound는 들어온 패킷을 앱에게 넘길지 판단한다.
+// Inbound는 들어온 패킷을 앱에 넘길지 판단한다.
 //
 // src는 복호화한 패킷의 출발지 터널 IP이고, wg가 이미 그 값이 그 상대의 것임을
 // 검사했다. from은 csa가 관측한 바깥 출발지다. NeedsSource가 거짓이면 비어 있어도
@@ -250,7 +250,7 @@ func (r *Rules) Outbound(dst netip.Addr, dstPort uint16) Decision {
 	return Decision{false, fmt.Sprintf("모르는 상대다: %s", dst)}
 }
 
-// InboundICMP는 들어온 ICMP를 앱에게 넘길지 판단한다.
+// InboundICMP는 들어온 ICMP를 앱에 넘길지 판단한다.
 //
 // ICMP에는 포트가 없어 어느 앱으로 가는지 가릴 수 없다. 그래서 그 상대를 들이는
 // 규칙이 하나라도 있으면 허용한다. 통신할 권한이 있는 상대끼리 진단할 수 있어야
