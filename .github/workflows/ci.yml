@@ -11,7 +11,9 @@ on:
     branches: [main]
 
 jobs:
-  단위:
+  # 작업의 열쇠는 영문이어야 한다. 화면에 보이는 이름만 한글로 둔다.
+  unit:
+    name: 단위 시험
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,7 +22,8 @@ jobs:
           go-version-file: go.mod
       - run: make test
 
-  통합:
+  tunnel:
+    name: 통합 시험
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
