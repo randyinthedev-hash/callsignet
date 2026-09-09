@@ -200,7 +200,7 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
   if grep -q "^nameserver 127.0.53.1" "/etc/netns/$NS_A/resolv.conf"; then
     printf '  ok    %s\n' "csa가 자기를 첫 줄에 넣었다"
   else
-    printf '  틀림  %s\n' "csa가 파일을 가져가지 않았다"; TAKE_OK=0
+    printf '  틀림  %s\n' "csa가 자기를 첫 줄에 넣지 않았다"; TAKE_OK=0
   fi
   if grep -q "^nameserver $UPSTREAM" "/etc/netns/$NS_A/resolv.conf"; then
     printf '  ok    %s\n' "원래 리졸버를 남겼다"
@@ -208,9 +208,9 @@ if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; the
     printf '  틀림  %s\n' "원래 리졸버를 잃었다"; TAKE_OK=0
   fi
   if grep -q "이름 해석을 확인했습니다" "$WORK/a/csa.log"; then
-    printf '  ok    %s\n' "csa가 스스로 확인했다"
+    printf '  ok    %s\n' "csa가 이름 해석이 되는지 스스로 확인했다"
   else
-    printf '  틀림  %s\n' "csa가 확인하지 못했다"; TAKE_OK=0
+    printf '  틀림  %s\n' "csa가 이름 해석이 되는지 확인하지 못했다"; TAKE_OK=0
   fi
   [ "$TAKE_OK" = 1 ] || { grep -i "이름 해석" "$WORK/a/csa.log" || true; exit 1; }
 
@@ -330,9 +330,9 @@ serve(9999)
       printf '  틀림  %s\n' "터널로 오는 연결까지 막았다"; DP_OK=0
     fi
     if ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1; then
-      printf '  ok    %s\n' "csa가 자기 표를 만들었다"
+      printf '  ok    %s\n' "csa가 자기 nftables 표를 만들었다"
     else
-      printf '  틀림  %s\n' "표가 없다"; DP_OK=0
+      printf '  틀림  %s\n' "csa의 nftables 표가 없다"; DP_OK=0
     fi
     n=$("$CSA" status -c "$WORK/b" -json 2>/dev/null | sed -n 's/.*"guard-blocked":\([0-9]*\).*/\1/p')
     if [ "${n:-0}" -gt 0 ]; then
@@ -537,7 +537,7 @@ PYCHECK
     if grep -q "들어온 연결을 받았습니다.*:$PORT_SECRET" "$WORK/b/csa.log"; then
       printf '  ok    %s\n' "바뀐 정책대로 들인다"
     else
-      printf '  틀림  %s\n' "여전히 막는다"; RL_OK=0
+      printf '  틀림  %s\n' "정책을 바꿨는데 받는 쪽이 여전히 막는다"; RL_OK=0
     fi
 
     # 상대를 더하면 이름 표도 함께 바뀐다.
@@ -619,9 +619,9 @@ TOML
       printf '  틀림  %s\n' "거두었는데 받는 쪽이 미는 것이 앱에 닿는다"; sed 's/^/        /' "$WORK/revoke.out"; RV_OK=0
     fi
     if grep -q "정책이 바뀌어 들여 둔 연결" "$WORK/b/csa.log"; then
-      printf '  ok    %s\n' "몇 개를 잊었는지 적는다"
+      printf '  ok    %s\n' "잊은 연결이 몇 개인지 적는다"
     else
-      printf '  틀림  %s\n' "잊었다고 적지 않는다"; RV_OK=0
+      printf '  틀림  %s\n' "잊은 연결의 수를 적지 않는다"; RV_OK=0
     fi
     [ "$RV_OK" = 1 ] || exit 1
 
@@ -688,9 +688,9 @@ TOML
     ip netns exec "$NS_A" timeout 3 bash -c "echo > /dev/tcp/$WG_B/8080" >/dev/null 2>&1 || true
     sleep 0.5
     if [ "$(count_b "들어온 연결을 받았습니다.*:8080")" -gt "$before" ]; then
-      printf '  ok    %s\n' "대역을 보지 않는 앱은 그대로 지난다"
+      printf '  ok    %s\n' "대역을 조건으로 두지 않은 앱은 그대로 지난다"
     else
-      printf '  틀림  %s\n' "대역과 상관없는 앱까지 막는다"; BD_OK=0
+      printf '  틀림  %s\n' "대역을 조건으로 두지 않은 앱까지 막는다"; BD_OK=0
     fi
 
     [ "$BD_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
@@ -789,7 +789,7 @@ for p in st['peers']:
     if grep -q "등록된 접속 주소가 아닌 곳에서 패킷이 왔습니다.*$IP_A2" "$WORK/b/csa.log"; then
       printf '  ok    %s\n' "peers.toml에 없는 자리에서 온 것을 알아챈다"
     else
-      printf '  틀림  %s\n' "낯선 자리를 알아채지 못한다"; LG_OK=0
+      printf '  틀림  %s\n' "peers.toml에 없는 자리에서 온 것을 알아채지 못한다"; LG_OK=0
     fi
 
     [ "$LG_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
@@ -884,9 +884,9 @@ serve(9999)
     kill "$PID_B2" 2>/dev/null || true
     sleep 1
     if ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1; then
-      printf '  틀림  %s\n' "멈추면서 규칙을 남겼다"; OD_OK=0
+      printf '  틀림  %s\n' "멈추면서 nftables 규칙을 남겼다"; OD_OK=0
     else
-      printf '  ok    %s\n' "멈추면서 규칙을 지웠다"
+      printf '  ok    %s\n' "멈추면서 nftables 규칙을 지웠다"
     fi
 
 
