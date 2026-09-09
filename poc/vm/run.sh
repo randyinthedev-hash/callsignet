@@ -24,7 +24,7 @@ APP_B=report
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-CSA="${CSA:-$REPO/csa-static}"
+CSA="${CSA:-}"
 WORK="$HERE/_work"
 POOL=/var/lib/libvirt/images
 IMG_UBUNTU="$POOL/cs-base-ubuntu.qcow2"
@@ -32,14 +32,21 @@ IMG_ROCKY="$POOL/cs-base-rocky.qcow2"
 URL_UBUNTU=https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
 URL_ROCKY=https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2
 
+. "$HERE/../lib.sh"
+
 if [ "$(id -u)" -ne 0 ]; then echo "root가 필요합니다: sudo $0" >&2; exit 1; fi
-if [ ! -x "$CSA" ]; then
-  echo "csa를 정적으로 먼저 만드십시오: make build-static" >&2
-  echo "Rocky는 Ubuntu보다 glibc가 낮아 동적으로 링크한 것은 돌지 않습니다." >&2
-  exit 1
+# 만들어 둔 것을 그냥 쓰면 낡은 바이너리로 시험이 돈다. 부르는 사람이 CSA로
+# 자리를 주었을 때만 그것을 쓴다.
+if [ -n "$CSA" ]; then
+  echo "csa를 새로 만들지 않고 준 것을 씁니다: $CSA"
+  [ -x "$CSA" ] || { echo "그 자리에 csa가 없습니다: $CSA" >&2; exit 1; }
+else
+  CSA="$REPO/csa-static"
+  # Rocky는 Ubuntu보다 glibc가 낮아 동적으로 링크한 것은 돌지 않는다.
+  build_csa "$REPO" "$CSA" static
 fi
 if ldd "$CSA" >/dev/null 2>&1; then
-  echo "$CSA가 동적으로 링크되어 있습니다. make build-static으로 다시 만드십시오." >&2
+  echo "$CSA가 동적으로 링크되어 있습니다. CGO_ENABLED=0으로 만들어야 합니다." >&2
   exit 1
 fi
 

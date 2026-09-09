@@ -46,7 +46,6 @@ sudo make tunnel
 네임스페이스에 없는 것은 실제 VM 둘에서 본다. libvirt가 필요하다.
 
 ```bash
-make build-static
 sudo make vm
 ```
 

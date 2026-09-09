@@ -23,11 +23,19 @@ WG_IF=cs0
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-CSA="${CSA:-$REPO/csa}"
 WORK="$HERE/_work"
+. "$HERE/../lib.sh"
 
 if [ "$(id -u)" -ne 0 ]; then echo "root가 필요합니다: sudo $0" >&2; exit 1; fi
-if [ ! -x "$CSA" ]; then echo "csa를 먼저 만드십시오: make build" >&2; exit 1; fi
+# 만들어 둔 것을 그냥 쓰면 낡은 바이너리로 시험이 돈다. 부르는 사람이 CSA로
+# 자리를 주었을 때만 그것을 쓴다.
+if [ -n "${CSA:-}" ]; then
+  echo "csa를 새로 만들지 않고 준 것을 씁니다: $CSA"
+  [ -x "$CSA" ] || { echo "그 자리에 csa가 없습니다: $CSA" >&2; exit 1; }
+else
+  CSA="$REPO/csa"
+  build_csa "$REPO" "$CSA"
+fi
 
 cleanup() {
   [ -n "${PID_A:-}" ] && kill "$PID_A" 2>/dev/null || true
