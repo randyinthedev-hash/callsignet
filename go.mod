@@ -1,6 +1,6 @@
 module github.com/randyinthedev-hash/callsignet
 
-go 1.26.3
+go 1.26.6
 
 require (
 	github.com/BurntSushi/toml v1.4.0
