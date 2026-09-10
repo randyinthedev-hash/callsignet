@@ -62,8 +62,12 @@ func TestWriteSecret바꾸다실패해도쓰던키를잃지않는다(t *testing.
 	if err := writeSecret(path, "쓰던 키\n", false); err != nil {
 		t.Fatal(err)
 	}
-	// 옆에 쓸 자리를 디렉터리로 막아 두면 바꾸기가 실패한다.
+	// 옆에 쓸 자리를 빈 디렉터리로 두면 os.Remove가 지워 버린다. 안에 파일을
+	// 하나 넣어 지워지지 않게 한다. root로 돌 때도 막히는 방법이라야 한다.
 	if err := os.Mkdir(path+".new", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path+".new", "막는다"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeSecret(path, "새 키\n", true); err == nil {
