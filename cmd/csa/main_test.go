@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -62,14 +63,15 @@ func TestWriteSecret바꾸다실패해도쓰던키를잃지않는다(t *testing.
 	if err := writeSecret(path, "쓰던 키\n", false); err != nil {
 		t.Fatal(err)
 	}
-	// 옆에 쓸 자리를 빈 디렉터리로 두면 os.Remove가 지워 버린다. 안에 파일을
-	// 하나 넣어 지워지지 않게 한다. root로 돌 때도 막히는 방법이라야 한다.
-	if err := os.Mkdir(path+".new", 0o700); err != nil {
+	// 옆에 쓰지 못하게 디렉터리를 읽기만 되게 한다. root는 권한 검사를
+	// 지나므로 그때는 이 자리를 만들 수 없다.
+	if os.Getuid() == 0 {
+		t.Skip("root로 돌면 권한으로 막을 수 없다")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(path+".new", "막는다"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	defer os.Chmod(dir, 0o700)
 	if err := writeSecret(path, "새 키\n", true); err == nil {
 		t.Fatal("바꾸지 못했는데 성공이라고 했다")
 	}
@@ -134,6 +136,45 @@ func TestRollback(t *testing.T) {
 		// 하나가 실패해도 나머지는 밟아야 반쯤 걸린 자리가 좁아진다.
 		if n != 3 {
 			t.Fatalf("실패한 뒤 나머지를 멈췄다: %d", n)
+		}
+	})
+}
+
+// 시험에서 쓰는 대역이다. Keep을 불렀는지 센다.
+type fakeGuard struct{ kept int }
+
+func (g *fakeGuard) Keep() { g.kept++ }
+
+// TestWaitStop은 멈추는 두 갈래를 본다.
+//
+// 반쯤 걸린 상태로 멈출 때는 직통 경로 규칙을 남겨야 한다. 지우면 이 머신의
+// 서비스 포트가 터널 밖으로 다시 열린다. 신호로 멈출 때는 남기지 않는다.
+// 어느 쪽이든 이 함수가 돌아가면 runRun이 끝나고 터널이 닫힌다.
+func TestWaitStop(t *testing.T) {
+	quiet := func(string, ...any) {}
+
+	t.Run("반쯤 걸리면 규칙을 남기고 멈춘다", func(t *testing.T) {
+		mixed := make(chan struct{}, 1)
+		mixed <- struct{}{}
+		gd := &fakeGuard{}
+		err := waitStop(make(chan os.Signal), mixed, gd, quiet)
+		if !errors.Is(err, errMixed) {
+			t.Fatalf("멈추는 까닭을 알리지 않는다: %v", err)
+		}
+		if gd.kept != 1 {
+			t.Fatalf("직통 경로 규칙을 남기지 않았다: %d", gd.kept)
+		}
+	})
+
+	t.Run("신호로 멈추면 규칙을 지운다", func(t *testing.T) {
+		stop := make(chan os.Signal, 1)
+		stop <- syscall.SIGTERM
+		gd := &fakeGuard{}
+		if err := waitStop(stop, make(chan struct{}), gd, quiet); err != nil {
+			t.Fatalf("신호로 멈추는데 오류가 났다: %v", err)
+		}
+		if gd.kept != 0 {
+			t.Fatal("신호로 멈추는데 규칙을 남겼다")
 		}
 	})
 }

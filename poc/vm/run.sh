@@ -33,6 +33,7 @@ URL_UBUNTU=https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-s
 URL_ROCKY=https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2
 
 . "$HERE/../lib.sh"
+RESULTS="$REPO/results"
 
 if [ "$(id -u)" -ne 0 ]; then echo "root가 필요합니다: sudo $0" >&2; exit 1; fi
 # 만들어 둔 것을 그냥 쓰면 낡은 바이너리로 시험이 돈다. 부르는 사람이 CSA로
@@ -306,8 +307,12 @@ for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
     exit 1
   fi
 done
+# LINES는 기록에 남길 검사 결과다.
+LINES=""
 say() { # ok/틀림 설명
   if [ "$1" = ok ]; then printf '  ok    %s\n' "$2"; else printf '  틀림  %s\n' "$2"; VM_OK=0; fi
+  LINES="$LINES| $1 | $2 |
+"
 }
 # on_a와 on_b는 출력을 얻을 때 쓴다. 실패해도 스크립트가 멈추지 않도록 결과를
 # 삼킨다. 성공했는지가 곧 검사인 자리에는 쓰면 안 된다. 늘 참이 된다.
@@ -428,3 +433,22 @@ if [ "$VM_OK" != 1 ]; then
   exit 1
 fi
 echo "확인됨. 실제 머신 둘에서 두 갈래가 모두 돈다."
+
+# 무엇을 언제 확인했는지 남긴다. 이 시험은 CI에서 돌지 않으므로 기록이 없으면
+# 발행할 때 무엇을 확인했는지 보일 방법이 없다.
+mkdir -p "$RESULTS"
+own "$RESULTS"
+REPORT="$RESULTS/vm-$(date -u +%Y%m%dT%H%M%SZ).md"
+{
+  echo "# VM 시험 ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+  echo
+  echo "커밋 $(git -C "$REPO" rev-parse --short HEAD), csa의 판 $("$CSA" version)"
+  echo "A는 Ubuntu 24.04, B는 Rocky 9다."
+  echo
+  echo "| 결과 | 확인한 것 |"
+  echo "|---|---|"
+  printf '%s' "$LINES"
+} > "$REPORT"
+own "$REPORT"
+echo
+echo "기록: ${REPORT#$REPO/}"

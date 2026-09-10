@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -134,6 +135,15 @@ func checkSecretFile(kind, path string) string {
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 		return fmt.Sprintf("%s 파일을 다른 사용자가 읽을 수 있다. 0600으로 두라: %s (지금 %o)",
 			kind, path, perm)
+	}
+	// 권한만 보아서는 모자란다. 0600이어도 임자가 남이면 그 사람이 언제든
+	// 내용을 바꿀 수 있다. csa는 root로 도므로 root의 것이거나 csa를 돌리는
+	// 사용자의 것이어야 한다.
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		if uid := os.Getuid(); int(st.Uid) != uid && st.Uid != 0 {
+			return fmt.Sprintf("%s 파일의 임자가 다르다: %s (임자 %d, 이 csa %d)",
+				kind, path, st.Uid, uid)
+		}
 	}
 	f, err := os.Open(path)
 	if err != nil {

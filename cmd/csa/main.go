@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -97,26 +98,28 @@ func writeSecret(path, body string, force bool) error {
 
 	// 바꿀 때는 옆에 온전히 써 두고 한 번에 옮긴다. 있던 파일을 먼저 비우면
 	// 쓰다가 실패했을 때 쓰던 정상 키를 잃는다.
-	tmp := path + ".new"
-	os.Remove(tmp)
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	//
+	// 옆에 쓰는 자리의 이름은 미리 알 수 없게 둔다. 이름을 정해 두면 남이 그
+	// 자리에 미리 무언가를 놓아 둘 수 있고, 우리가 그것을 지우게 된다.
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*")
 	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // 옮기고 나면 없으므로 아무 일도 하지 않는다
+	// CreateTemp는 0600으로 만들지만 만드는 쪽이 바뀔 수 있으니 못박는다.
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
 		return err
 	}
 	if _, err := f.WriteString(body); err != nil {
 		f.Close()
-		os.Remove(tmp)
 		return err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return os.Rename(tmp, path)
 }
 
 func runCheck(args []string) error {
@@ -235,6 +238,18 @@ func runRun(args []string) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	logf("csa가 돕니다. 멈추려면 Ctrl-C를 누르십시오.")
+	return waitStop(stop, mixed, gd, logf)
+}
+
+// keeper는 멈출 때 직통 경로 규칙을 남길 수 있는 것이다. 시험에서 바꿔 낀다.
+type keeper interface{ Keep() }
+
+// waitStop은 멈출 까닭을 기다린다.
+//
+// 여기서 돌아가면 runRun이 끝나고, 쌓아 둔 defer가 터널과 이름 해석기를 닫는다.
+// 그것이 이 함수가 하는 일의 절반이다. 나머지 절반은 반쯤 걸린 상태로 멈출 때
+// 직통 경로 규칙을 남기는 것이다.
+func waitStop(stop <-chan os.Signal, mixed <-chan struct{}, gd keeper, logf func(string, ...any)) error {
 	select {
 	case <-stop:
 		logf("멈춥니다.")

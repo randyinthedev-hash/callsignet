@@ -35,3 +35,11 @@ build_csa() { # 리포 만들 자리 [static]
   fi
   echo "csa를 새로 만들었습니다: $out"
 }
+
+# own은 root로 만든 파일을 부른 사람에게 넘긴다. 시험은 root로 도는데 기록은
+# 리포에 남으므로, 그대로 두면 부른 사람이 그 파일을 지우지도 고치지도 못한다.
+# git이 그 파일을 덮어쓰지 못해 pull이 막히는 일도 생긴다.
+own() { # 파일이나 디렉터리
+  [ -n "${SUDO_UID:-}" ] || return 0
+  chown -R "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$@" 2>/dev/null || true
+}
