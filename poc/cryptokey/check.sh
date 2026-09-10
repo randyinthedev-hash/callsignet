@@ -33,6 +33,8 @@ PASS=0
 {
   echo "# cryptokey routing 확인 ($TS)"
   echo
+  echo "커밋 $(git -C "$REPO" rev-parse --short HEAD)"
+  echo
   echo "| 출발지 | ping | rx_packets | rx_errors | rx_dropped |"
   echo "|---|---|---|---|---|"
   printf '| %s (허용) | %s | +%d | +%d | +%d |\n' "$WG_CLI" "$OK1" "$((P1-P0))" "$((E1-E0))" "$((D1-D0))"
