@@ -377,10 +377,12 @@ func configureLink(name, tunnelIP, cidr string, mtu int) error {
 	return nil
 }
 
+// readKey는 개인키 파일을 읽는다. 설정 검사가 쓰는 것과 같은 함수로 연다.
+// 검사할 때 본 파일과 wg에 넣을 때 읽는 파일이 같아야 한다.
 func readKey(path string) (string, error) {
-	b, err := os.ReadFile(path)
+	b, err := config.ReadSecret("개인키", path)
 	if err != nil {
-		return "", fmt.Errorf("개인키 파일을 읽지 못했다: %w", err)
+		return "", err
 	}
 	return strings.TrimSpace(string(b)), nil
 }

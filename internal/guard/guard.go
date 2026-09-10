@@ -87,8 +87,7 @@ type Config struct {
 // 때문이다.
 func Ruleset(c Config) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "table inet %s\n", tableName)
-	fmt.Fprintf(&b, "delete table inet %s\n", tableName)
+	b.WriteString(dropTable())
 	fmt.Fprintf(&b, "table inet %s {\n", tableName)
 	fmt.Fprintf(&b, "\tcounter %s {\n\t}\n\n", counterName)
 	b.WriteString("\tchain input {\n")
@@ -125,6 +124,13 @@ func Ruleset(c Config) string {
 	}
 	b.WriteString("\t}\n}\n")
 	return b.String()
+}
+
+// dropTable은 이 리포의 표를 만들고 지우는 배치다. 표가 없으면 만들어서
+// 지우므로 nft가 「그런 표가 없다」고 답하지 않는다. 그래서 그 답을 문구로
+// 가리지 않아도 된다. 문구는 배포판과 로캘마다 다르다.
+func dropTable() string {
+	return fmt.Sprintf("table inet %s\ndelete table inet %s\n", tableName, tableName)
 }
 
 func dedup(in []int) []int {
@@ -165,6 +171,10 @@ func findNft() (string, error) {
 		" csa.toml에 guard.mode = \"off\"를 두라")
 }
 
+// lookNft는 nft를 찾는다. 시험이 갈아 끼울 수 있게 변수로 둔다. 시험 머신에
+// /usr/sbin/nft가 있으면 「찾지 못한 자리」를 다른 방법으로 만들 수 없다.
+var lookNft = findNft
+
 func New(logf func(string, ...any)) *Guard {
 	return &Guard{logf: logf}
 }
@@ -179,7 +189,7 @@ func (g *Guard) Check(c Config) error {
 	if c.Mode == ModeOff {
 		return nil
 	}
-	nft, err := findNft()
+	nft, err := lookNft()
 	if err != nil {
 		return err
 	}
@@ -201,15 +211,23 @@ func (g *Guard) Apply(c Config) error {
 		//
 		// 그래서 이 객체가 무엇을 걸었는지와 무관하게 지운다. 표가 없다는
 		// 답은 잘못이 아니다.
-		if err := removeTable(g.logf); err != nil {
+		checked, err := removeTable(g.logf)
+		if err != nil {
 			return err
 		}
 		g.on = false
+		if !checked {
+			g.logf("직통 경로를 닫지 않습니다. guard.mode가 off입니다." +
+				" 다만 nft를 찾지 못해 앞서 남은 규칙이 있는지 보지 못했습니다." +
+				" 그 규칙이 남아 있으면 이 머신의 서비스 포트는 아직 닫혀 있습니다." +
+				" nftables를 설치하고 csa를 다시 띄우십시오.")
+			return nil
+		}
 		g.logf("직통 경로를 닫지 않습니다. guard.mode가 off입니다." +
 			" 이 머신의 서비스 포트는 터널 밖에서도 열려 있습니다.")
 		return nil
 	}
-	nft, err := findNft()
+	nft, err := lookNft()
 	if err != nil {
 		return err
 	}
@@ -268,33 +286,31 @@ func (g *Guard) tell(c Config) {
 // Close는 걸어 둔 표를 지운다. 조직의 다른 규칙은 건드리지 않는다.
 // removeTable은 커널에 있는 이 리포의 표를 지운다. 몇 번을 불러도 같다.
 //
-// 표가 없다는 답은 잘못이 아니다. 지우려던 것이 이미 없는 것이기 때문이다.
-// nft를 찾지 못하는 것도 잘못으로 보지 않는다. nft가 없는 머신에는 표도 없다.
-func removeTable(logf func(string, ...any)) error {
-	nft, err := findNft()
+// 돌려주는 첫 값은 지웠는지 확인했는지다. nft를 찾지 못하면 거짓이다. 커널에
+// 걸린 표는 nft 실행 파일을 지워도 남는다. 그러므로 nft가 없는 것을 「표도
+// 없다」로 볼 수 없다. 확인하지 못한 것은 확인하지 못했다고 알린다.
+//
+// 지울 때는 만들고 지우는 배치를 쓴다. 표가 없어도 nft가 잘못이라고 답하지
+// 않으므로 「그런 표가 없다」는 답을 문구로 가리지 않아도 된다.
+func removeTable(logf func(string, ...any)) (bool, error) {
+	nft, err := lookNft()
 	if err != nil {
-		return nil
+		return false, nil
 	}
-	out, err := exec.Command(nft, "delete", "table", "inet", tableName).CombinedOutput()
-	if err == nil {
+	// 지우기 전에 표가 있었는지 본다. 배치는 표가 없어도 성공하므로 배치의
+	// 결과만으로는 무엇을 지웠는지 알 수 없다. 여기서는 나가는 값이 아니라
+	// 명령이 끝난 값만 본다.
+	had := exec.Command(nft, "list", "table", "inet", tableName).Run() == nil
+	cmd := exec.Command(nft, "-f", "-")
+	cmd.Stdin = strings.NewReader(dropTable())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("남아 있는 직통 경로 규칙을 지우지 못했다: %v (%s)",
+			err, strings.TrimSpace(string(out)))
+	}
+	if had {
 		logf("앞서 돌던 csa가 남긴 직통 경로 규칙을 지웠습니다.")
-		return nil
 	}
-	if missingTable(string(out)) {
-		return nil
-	}
-	return fmt.Errorf("남아 있는 직통 경로 규칙을 지우지 못했다: %v (%s)", err, strings.TrimSpace(string(out)))
-}
-
-// missingTable은 nft가 「그런 표가 없다」고 답했는지 본다. 배포판마다 문구가
-// 달라 몇 가지를 함께 본다.
-func missingTable(out string) bool {
-	for _, s := range []string{"No such file or directory", "does not exist", "그런 파일이나 디렉터리가 없습니다"} {
-		if strings.Contains(out, s) {
-			return true
-		}
-	}
-	return false
+	return true, nil
 }
 
 // Keep은 멈출 때 규칙을 지우지 말라고 이른다.

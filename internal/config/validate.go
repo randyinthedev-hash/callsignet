@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -124,32 +123,16 @@ func checkGuard(g Guard) []string {
 // 지난다. 무엇보다 0644인 개인키가 그대로 지나면 다른 사용자가 그 머신의
 // 신원을 가져갈 수 있다. csa가 만든 파일은 0600이지만 운영자가 다른 곳에서
 // 옮겨 온 파일은 그렇지 않다.
+//
+// 검사는 ReadSecret이 한다. csa가 실제로 그 파일을 읽을 때 쓰는 것과 같은
+// 함수다. 검사와 사용이 다른 길로 가면 그 사이에 파일이 바뀔 수 있다.
 func checkSecretFile(kind, path string) string {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return fmt.Sprintf("%s 파일을 열 수 없다: %s", kind, path)
-	}
-	if !fi.Mode().IsRegular() {
-		return fmt.Sprintf("%s 자리가 일반 파일이 아니다: %s", kind, path)
-	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return fmt.Sprintf("%s 파일을 다른 사용자가 읽을 수 있다. 0600으로 두라: %s (지금 %o)",
-			kind, path, perm)
-	}
-	// 권한만 보아서는 모자란다. 0600이어도 임자가 남이면 그 사람이 언제든
-	// 내용을 바꿀 수 있다. csa는 root로 도므로 root의 것이거나 csa를 돌리는
-	// 사용자의 것이어야 한다.
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		if uid := os.Getuid(); int(st.Uid) != uid && st.Uid != 0 {
-			return fmt.Sprintf("%s 파일의 임자가 다르다: %s (임자 %d, 이 csa %d)",
-				kind, path, st.Uid, uid)
+	if _, err := ReadSecret(kind, path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("%s 파일을 열 수 없다: %s", kind, path)
 		}
+		return err.Error()
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return fmt.Sprintf("%s 파일을 읽을 수 없다: %s", kind, path)
-	}
-	f.Close()
 	return ""
 }
 
@@ -409,9 +392,9 @@ func (c *Config) checkKeyPair() []string {
 	if self == nil || c.Self.PrivateKey == "" {
 		return nil // 다른 검사가 이미 잡는다
 	}
-	raw, err := os.ReadFile(c.Self.PrivateKey)
+	raw, err := ReadSecret("개인키", c.Self.PrivateKey)
 	if err != nil {
-		return nil // 파일이 없는 것도 다른 검사가 잡는다
+		return nil // 파일이 없거나 안전하지 않은 것도 다른 검사가 잡는다
 	}
 	priv, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
 	if err != nil || len(priv) != 32 {
@@ -447,20 +430,15 @@ func (c *Config) checkPSK() []string {
 		if peer.PeerID == c.Self.PeerID {
 			continue
 		}
+		// LoadPSK가 파일을 열면서 개인키와 같은 검사를 함께 한다. 여기서
+		// 다시 열지 않는다. 두 번 열면 그 사이에 파일이 바뀔 수 있다.
 		_, ok, err := c.LoadPSK(peer.PeerID)
 		if err != nil {
 			p = append(p, err.Error())
 			continue
 		}
-		if !ok {
-			if c.Self.PSK.Mode == "required" {
-				p = append(p, fmt.Sprintf("psk.mode가 required인데 사전 공유키가 없다: %s", c.PSKPath(peer.PeerID)))
-			}
-			continue
-		}
-		// 개인키와 같은 이유로 이 파일도 다른 사용자가 읽을 수 없어야 한다.
-		if msg := checkSecretFile("사전 공유키", c.PSKPath(peer.PeerID)); msg != "" {
-			p = append(p, msg)
+		if !ok && c.Self.PSK.Mode == "required" {
+			p = append(p, fmt.Sprintf("psk.mode가 required인데 사전 공유키가 없다: %s", c.PSKPath(peer.PeerID)))
 		}
 	}
 	return p

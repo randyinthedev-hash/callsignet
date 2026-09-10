@@ -104,6 +104,13 @@ func TestValidate(t *testing.T) {
 			}
 		}, "다른 사용자가 읽을 수 있다"},
 		{"개인키 자리가 디렉터리다", func(c *Config) { c.Self.PrivateKey = filepath.Dir(c.Self.PrivateKey) }, "일반 파일이 아니다"},
+		{"개인키 자리가 심볼릭 링크다", func(c *Config) {
+			link := c.Self.PrivateKey + ".link"
+			if err := os.Symlink(c.Self.PrivateKey, link); err != nil {
+				panic(err)
+			}
+			c.Self.PrivateKey = link
+		}, "심볼릭 링크"},
 		{"peer-id가 두 번 나온다", func(c *Config) { c.Peers[1].PeerID = "srv-a" }, "두 번 나온다"},
 		{"개인키 파일이 없다", func(c *Config) { c.Self.PrivateKey = "/없는/경로" }, "개인키 파일"},
 		{"접속 주소를 읽을 수 없다", func(c *Config) { c.Peers[1].Endpoints = []string{"바보"} }, "endpoint"},

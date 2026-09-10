@@ -1,6 +1,8 @@
 package guard
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -139,14 +141,23 @@ func TestCountOf(t *testing.T) {
 	}
 }
 
-// fakeNft는 PATH에 가짜 nft를 놓고 그것이 받은 인자를 적어 둔다. 진짜 nft는
-// root가 있어야 돌므로 단위 시험에서 쓸 수 없다.
-func fakeNft(t *testing.T, exitCode int, stderr string) (calls func() string) {
+// fakeNft는 PATH에 가짜 nft를 놓고 그것이 받은 인자와 표준 입력을 적어 둔다.
+// 진짜 nft는 root가 있어야 돌므로 단위 시험에서 쓸 수 없다.
+//
+// listExit는 「list table」을 물었을 때 내놓을 값이다. 0이면 표가 있다는 뜻이고
+// 0이 아니면 없다는 뜻이다. exitCode는 나머지 부름에 내놓을 값이다.
+func fakeNft(t *testing.T, listExit, exitCode int, stderr string) (calls func() string) {
 	t.Helper()
 	dir := t.TempDir()
 	// 이름에 빈칸을 두지 않는다. 셸의 방향 바꾸기에서 갈라진다.
 	log := filepath.Join(dir, "부른것")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(log) + "\n"
+	q := strconv.Quote(log)
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + q + "\n"
+	// 규칙 글은 인자가 아니라 표준 입력으로 온다. 그것도 적어 두어야 무엇을
+	// 지우라고 했는지 시험이 볼 수 있다. read와 printf는 셸에 딸린 것이라
+	// PATH가 이 임시 폴더 하나뿐이어도 돈다. cat은 그 자리에서 찾지 못한다.
+	script += "while IFS= read -r line; do printf '%s\\n' \"$line\" >> " + q + "; done\n"
+	script += "if [ \"$1\" = list ]; then exit " + strconv.Itoa(listExit) + "; fi\n"
 	if stderr != "" {
 		script += "printf '%s\\n' " + strconv.Quote(stderr) + " >&2\n"
 	}
@@ -164,6 +175,20 @@ func fakeNft(t *testing.T, exitCode int, stderr string) (calls func() string) {
 	}
 }
 
+// noNft는 nft를 찾지 못하는 자리를 만든다. PATH만 비워서는 모자라다. findNft가
+// /usr/sbin과 /sbin도 보는데 시험을 돌리는 머신에 그것이 있을 수 있다.
+func noNft(t *testing.T) {
+	t.Helper()
+	old := lookNft
+	lookNft = func() (string, error) { return "", errors.New("nft를 찾지 못했다") }
+	t.Cleanup(func() { lookNft = old })
+}
+
+// said는 로그로 찍힌 문구를 모은다.
+func said(lines *[]string) func(string, ...any) {
+	return func(f string, a ...any) { *lines = append(*lines, fmt.Sprintf(f, a...)) }
+}
+
 // TestOff앞서남은표를지운다는 앞서 돌던 csa가 남긴 표를 새 csa가 지우는지 본다.
 //
 // 반쯤 걸린 상태로 멈출 때 csa는 표를 일부러 남긴다. 운영자가 그것을 풀려고
@@ -171,8 +196,9 @@ func fakeNft(t *testing.T, exitCode int, stderr string) (calls func() string) {
 // 여겨 아무것도 지우지 않았다. 그러면 csa는 「닫지 않는다」고 알리면서 실제로는
 // 앞선 표가 계속 포트를 막는다.
 func TestOff앞서남은표를지운다(t *testing.T) {
-	calls := fakeNft(t, 0, "")
-	g := New(func(string, ...any) {})
+	calls := fakeNft(t, 0, 0, "")
+	var lines []string
+	g := New(said(&lines))
 	if err := g.Apply(Config{Mode: ModeOff}); err != nil {
 		t.Fatalf("off를 걸지 못했다: %v", err)
 	}
@@ -180,22 +206,53 @@ func TestOff앞서남은표를지운다(t *testing.T) {
 	if !strings.Contains(got, "delete table inet callsignet") {
 		t.Fatalf("남은 표를 지우지 않았다. nft를 부른 것: %q", got)
 	}
+	if !strings.Contains(strings.Join(lines, "\n"), "남긴 직통 경로 규칙을 지웠습니다") {
+		t.Fatalf("지웠다고 알리지 않았다. 찍은 것: %v", lines)
+	}
 }
 
 // TestOff표가없어도잘못이아니다는 지우려던 것이 이미 없는 자리를 본다.
+//
+// 표를 만들고 지우는 배치를 쓰므로 nft는 표가 없어도 잘못이라고 답하지 않는다.
+// 그래서 이 자리에서는 아무 말도 하지 않아야 한다. 지운 것이 없기 때문이다.
 func TestOff표가없어도잘못이아니다(t *testing.T) {
-	fakeNft(t, 1, "Error: No such file or directory")
-	g := New(func(string, ...any) {})
+	fakeNft(t, 1, 0, "")
+	var lines []string
+	g := New(said(&lines))
 	if err := g.Apply(Config{Mode: ModeOff}); err != nil {
 		t.Fatalf("표가 없는 것을 잘못으로 보았다: %v", err)
+	}
+	if strings.Contains(strings.Join(lines, "\n"), "지웠습니다") {
+		t.Fatalf("지운 것이 없는데 지웠다고 알렸다. 찍은 것: %v", lines)
 	}
 }
 
 // TestOff지우지못하면알린다는 다른 까닭으로 실패한 것을 삼키지 않는지 본다.
 func TestOff지우지못하면알린다(t *testing.T) {
-	fakeNft(t, 1, "Error: Could not process rule: Operation not permitted")
+	fakeNft(t, 0, 1, "Error: Could not process rule: Operation not permitted")
 	g := New(func(string, ...any) {})
 	if err := g.Apply(Config{Mode: ModeOff}); err == nil {
 		t.Fatal("지우지 못했는데 걸었다고 했다")
+	}
+}
+
+// TestOffnft가없으면확인하지못했다고알린다는 nft 실행 파일이 없는 자리를 본다.
+//
+// 커널에 걸린 표는 nft 실행 파일을 지워도 남는다. 그러므로 nft가 없는 것을
+// 「표도 없다」로 볼 수 없다. 앞서는 그렇게 보아서, csa가 「포트가 열려 있다」고
+// 알리는 동안 옛 표가 계속 그 포트를 막을 수 있었다.
+func TestOffnft가없으면확인하지못했다고알린다(t *testing.T) {
+	noNft(t)
+	var lines []string
+	g := New(said(&lines))
+	if err := g.Apply(Config{Mode: ModeOff}); err != nil {
+		t.Fatalf("nft가 없다고 기동을 막았다: %v", err)
+	}
+	got := strings.Join(lines, "\n")
+	if !strings.Contains(got, "보지 못했습니다") {
+		t.Fatalf("확인하지 못했다고 알리지 않았다. 찍은 것: %v", lines)
+	}
+	if strings.Contains(got, "터널 밖에서도 열려 있습니다") {
+		t.Fatalf("확인하지 못했는데 열려 있다고 단정했다. 찍은 것: %v", lines)
 	}
 }

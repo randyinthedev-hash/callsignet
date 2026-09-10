@@ -180,12 +180,14 @@ func (c *Config) LoadPSK(peerID string) (string, bool, error) {
 	if path == "" {
 		return "", false, nil
 	}
-	b, err := os.ReadFile(path)
+	// 개인키와 같은 길로 읽는다. 파일을 한 번만 열어 그 설명자에서 형식과
+	// 임자와 권한을 보고 같은 설명자로 내용을 읽는다.
+	b, err := ReadSecret("사전 공유키", path)
 	if os.IsNotExist(err) {
 		return "", false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("사전 공유키를 읽지 못했다: %s: %w", path, err)
+		return "", true, err
 	}
 	key := strings.TrimSpace(string(b))
 	raw, err := base64.StdEncoding.DecodeString(key)
