@@ -10,18 +10,20 @@ import (
 // Status는 csa status가 보여 주는 값이다. 도는 csa가 JSON으로 내고 csa status가
 // 읽어 표로 찍는다.
 type Status struct {
-	PeerID       string       `json:"peer-id"`
-	Iface        string       `json:"iface"`
-	TunnelIP     string       `json:"tunnel-ip"`
-	Domain       string       `json:"domain"`
-	Resolver     string       `json:"resolver"`
-	Guard        string       `json:"guard"`
-	GuardBlocked uint64       `json:"guard-blocked"`
-	MTU          int          `json:"mtu"`
-	MaxMSS       uint16       `json:"max-mss"`
-	Clamped      uint64       `json:"mss-clamped"`
-	Since        time.Time    `json:"since"`
-	Peers        []PeerStatus `json:"peers"`
+	PeerID       string `json:"peer-id"`
+	Iface        string `json:"iface"`
+	TunnelIP     string `json:"tunnel-ip"`
+	Domain       string `json:"domain"`
+	Resolver     string `json:"resolver"`
+	Guard        string `json:"guard"`
+	GuardBlocked uint64 `json:"guard-blocked"`
+	// GuardUnchecked는 앞서 남은 직통 경로 규칙이 있는지 보지 못했다는 뜻이다.
+	GuardUnchecked bool         `json:"guard-unchecked"`
+	MTU            int          `json:"mtu"`
+	MaxMSS         uint16       `json:"max-mss"`
+	Clamped        uint64       `json:"mss-clamped"`
+	Since          time.Time    `json:"since"`
+	Peers          []PeerStatus `json:"peers"`
 }
 
 // PeerStatus는 상대 하나의 상태다. Handshake가 비어 있으면 아직 한 번도 세션을
@@ -49,8 +51,13 @@ func Format(s Status, now time.Time) string {
 	fmt.Fprintf(&b, "이름 해석 자리를 차지한 방법: %s\n", s.Resolver)
 	fmt.Fprintf(&b, "MTU %d, TCP MSS 한도 %d바이트입니다. 지금까지 깎은 횟수 %d번입니다.\n",
 		s.MTU, s.MaxMSS, s.Clamped)
-	fmt.Fprintf(&b, "직통 경로를 닫는 방법: %s. 지금까지 막은 패킷 %d개입니다.\n\n",
+	fmt.Fprintf(&b, "직통 경로를 닫는 방법: %s. 지금까지 막은 패킷 %d개입니다.\n",
 		s.Guard, s.GuardBlocked)
+	if s.GuardUnchecked {
+		b.WriteString("nft를 찾지 못해 앞서 남은 직통 경로 규칙이 있는지 보지 못했습니다." +
+			" 그 규칙이 남아 있으면 이 머신의 서비스 포트는 아직 닫혀 있습니다.\n")
+	}
+	b.WriteString("\n")
 
 	if len(s.Peers) == 0 {
 		b.WriteString("peers.toml에 다른 상대가 없습니다.\n")

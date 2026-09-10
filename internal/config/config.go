@@ -7,10 +7,12 @@ package config
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/BurntSushi/toml"
 )
@@ -124,6 +126,68 @@ type Config struct {
 	Self   Self
 	Peers  []Peer
 	Policy Policy
+
+	// secOnce와 sec는 이 설정이 가리키는 비밀 파일을 한 번만 읽으려고 둔다.
+	// Secrets가 채운다.
+	secOnce sync.Once
+	sec     *Secrets
+}
+
+// Secrets는 csa가 파일에서 한 번씩 읽어 둔 비밀이다.
+//
+// 설정 검사와 wg 설정이 같은 것을 써야 한다. 앞서는 검사가 개인키를 읽어 공개키
+// 짝을 보고, 기동이 같은 경로를 다시 읽어 wg에 넣었다. 그 사이에 파일이 바뀌면
+// 짝을 확인한 키와 실제로 쓰는 키가 달라진다.
+type Secrets struct {
+	// Private는 이 머신의 정적 개인키다. base64로 적은 것을 다듬어 담는다.
+	Private string
+	// PrivateErr는 개인키를 읽다가 걸린 것이다. 걸리지 않았으면 nil이다.
+	PrivateErr error
+	// PSK는 상대마다 쓰는 사전 공유키다. 파일이 없는 상대는 빠져 있다.
+	PSK map[string]string
+	// PSKErr는 그 상대의 사전 공유키를 읽다가 걸린 것이다.
+	PSKErr map[string]error
+}
+
+// Secrets는 이 설정이 가리키는 비밀 파일을 읽어 돌려준다. 처음 부를 때 한 번
+// 읽고 그 뒤로는 같은 값을 돌려준다.
+//
+// 설정을 다시 읽을 때는 Load가 새 Config를 만들므로 파일도 다시 읽는다.
+func (c *Config) Secrets() *Secrets {
+	c.secOnce.Do(func() { c.sec = c.readSecrets() })
+	return c.sec
+}
+
+func (c *Config) readSecrets() *Secrets {
+	s := &Secrets{PSK: map[string]string{}, PSKErr: map[string]error{}}
+	switch {
+	case c.Self.PrivateKey == "":
+		s.PrivateErr = errors.New("csa.toml에 private-key가 없다")
+	default:
+		b, err := ReadSecret("개인키", c.Self.PrivateKey)
+		if os.IsNotExist(err) {
+			err = fmt.Errorf("개인키 파일을 열 수 없다: %s", c.Self.PrivateKey)
+		}
+		if err != nil {
+			s.PrivateErr = err
+		} else {
+			s.Private = strings.TrimSpace(string(b))
+		}
+	}
+	for _, peer := range c.Peers {
+		if peer.PeerID == c.Self.PeerID {
+			continue
+		}
+		key, ok, err := c.LoadPSK(peer.PeerID)
+		if err != nil {
+			s.PSKErr[peer.PeerID] = err
+			continue
+		}
+		if ok {
+			s.PSK[peer.PeerID] = key
+		}
+	}
+	return s
 }
 
 // Load는 디렉터리에서 세 파일을 읽는다. 검사하지는 않는다.
@@ -210,19 +274,17 @@ func (c *Config) LoadPSK(peerID string) (string, bool, error) {
 	return key, true, nil
 }
 
-// LoadPSKs는 모든 상대의 사전 공유키를 읽는다. 없는 상대는 빠진다.
-func (c *Config) LoadPSKs() (map[string]string, error) {
-	out := map[string]string{}
+// PSKs는 읽어 둔 사전 공유키를 돌려준다. 하나라도 읽지 못했으면 그것을 알린다.
+func (c *Config) PSKs() (map[string]string, error) {
+	s := c.Secrets()
+	// 어느 상대에서 걸렸는지 늘 같은 차례로 알린다. map을 훑으면 차례가 그때마다
+	// 달라져 같은 설정에 다른 말을 하게 된다.
 	for _, peer := range c.Peers {
-		key, ok, err := c.LoadPSK(peer.PeerID)
-		if err != nil {
+		if err := s.PSKErr[peer.PeerID]; err != nil {
 			return nil, err
 		}
-		if ok {
-			out[peer.PeerID] = key
-		}
 	}
-	return out, nil
+	return s.PSK, nil
 }
 
 // Find는 peer-id로 peer 항목을 찾는다.

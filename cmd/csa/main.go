@@ -304,8 +304,9 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover,
 		Clamped:  dev.MSSClamped(),
 		Since:    started,
 
-		Guard:        gd.Mode().String(),
-		GuardBlocked: gd.Blocked(),
+		Guard:          gd.Mode().String(),
+		GuardBlocked:   gd.Blocked(),
+		GuardUnchecked: gd.Unchecked(),
 	}
 	live := dev.Status()
 	for _, p := range cfg.Peers {

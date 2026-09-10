@@ -118,3 +118,85 @@ func TestLoadPSK도같은검사를받는다(t *testing.T) {
 		t.Fatalf("바른 키를 거절했다: %v", err)
 	}
 }
+
+// TestSecrets파일을한번만읽는다는 설정 검사와 wg 설정이 같은 바이트를 쓰는지
+// 본다.
+//
+// 앞서는 검사가 개인키를 읽어 공개키 짝을 보고, 기동이 같은 경로를 다시 읽어
+// wg에 넣었다. 그 사이에 파일이 바뀌면 짝을 확인한 키와 실제로 쓰는 키가 다른
+// 것이 된다.
+func TestSecrets파일을한번만읽는다(t *testing.T) {
+	path := secretFile(t, "private.key", "처음\n")
+	c := &Config{Self: Self{PeerID: "srv-a", PrivateKey: path}}
+	if got := c.Secrets().Private; got != "처음" {
+		t.Fatalf("처음 읽은 것이 다르다: %q", got)
+	}
+	if err := os.WriteFile(path, []byte("나중\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Secrets().Private; got != "처음" {
+		t.Fatalf("파일을 다시 읽었다. 검사한 키와 쓰는 키가 갈린다: %q", got)
+	}
+}
+
+// TestReadSecret남이고칠수있는자리를거절한다는 파일이 놓인 자리까지 보는지 본다.
+//
+// 파일 자체가 0600이고 임자가 맞아도, 그 파일이 놓인 디렉터리를 남이 고칠 수
+// 있으면 그 사람이 파일을 통째로 갈아 끼울 수 있다.
+func TestReadSecret남이고칠수있는자리를거절한다(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "열린자리")
+	if err := os.Mkdir(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	// Mkdir는 umask에 걸리므로 권한을 다시 건다.
+	if err := os.Chmod(dir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "private.key")
+	if err := os.WriteFile(path, []byte("내용\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ReadSecret("개인키", path)
+	if err == nil {
+		t.Fatal("남이 고칠 수 있는 자리에 둔 비밀 파일을 받아들였다")
+	}
+	if !strings.Contains(err.Error(), "다른 사용자가 고칠 수 있다") {
+		t.Fatalf("까닭을 자리의 권한이라고 적지 않았다: %v", err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadSecret("개인키", path); err != nil {
+		t.Fatalf("자리를 닫았는데 거절했다: %v", err)
+	}
+}
+
+// TestReadSecret상위디렉터리의링크도본다는 마지막 조각만 보지 않는지 본다.
+//
+// O_NOFOLLOW는 경로의 마지막 조각만 지킨다. 가운데 조각이 링크면 csa는 그것을
+// 따라간다. 따라간 끝이 남이 고칠 수 있는 자리이면 거절해야 한다.
+func TestReadSecret상위디렉터리의링크도본다(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(root, "진짜")
+	if err := os.Mkdir(real, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(real, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(real, "private.key")
+	if err := os.WriteFile(path, []byte("내용\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "링크")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ReadSecret("개인키", filepath.Join(link, "private.key"))
+	if err == nil {
+		t.Fatal("링크를 따라간 끝의 자리를 보지 않았다")
+	}
+	if !strings.Contains(err.Error(), "다른 사용자가 고칠 수 있다") {
+		t.Fatalf("까닭을 자리의 권한이라고 적지 않았다: %v", err)
+	}
+}

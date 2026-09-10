@@ -255,4 +255,21 @@ func TestOffnft가없으면확인하지못했다고알린다(t *testing.T) {
 	if strings.Contains(got, "터널 밖에서도 열려 있습니다") {
 		t.Fatalf("확인하지 못했는데 열려 있다고 단정했다. 찍은 것: %v", lines)
 	}
+	// 기동 로그에만 두면 그때 화면을 본 사람만 안다. csa status도 이것을 실어
+	// 보내야 뒤에 상태를 묻는 사람이 안다.
+	if !g.Unchecked() {
+		t.Fatal("보지 못했는데 status에는 그 사실을 싣지 않는다")
+	}
+}
+
+// TestOff확인했으면status에알리지않는다는 확인한 자리에서 그 값이 서지 않는지 본다.
+func TestOff확인했으면status에알리지않는다(t *testing.T) {
+	fakeNft(t, 1, 0, "")
+	g := New(func(string, ...any) {})
+	if err := g.Apply(Config{Mode: ModeOff}); err != nil {
+		t.Fatalf("off를 걸지 못했다: %v", err)
+	}
+	if g.Unchecked() {
+		t.Fatal("확인했는데 보지 못했다고 알린다")
+	}
 }

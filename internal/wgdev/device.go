@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -60,7 +59,7 @@ type snapshot struct {
 }
 
 func newSnapshot(c *config.Config) (*snapshot, error) {
-	psk, err := c.LoadPSKs()
+	psk, err := c.PSKs()
 	if err != nil {
 		return nil, err
 	}
@@ -86,10 +85,13 @@ func Open(c *config.Config, logf func(string, ...any)) (*Device, error) {
 	if self == nil {
 		return nil, fmt.Errorf("csa.toml의 peer-id가 peers.toml에 없다: %s", c.Self.PeerID)
 	}
-	privB64, err := readKey(c.Self.PrivateKey)
-	if err != nil {
-		return nil, err
+	// 개인키를 여기서 다시 읽지 않는다. 설정 검사가 공개키 짝을 확인한 바로 그
+	// 바이트를 쓴다. 두 번 읽으면 그 사이에 파일이 바뀔 수 있다.
+	sec := c.Secrets()
+	if sec.PrivateErr != nil {
+		return nil, sec.PrivateErr
 	}
+	privB64 := sec.Private
 	snap, err := newSnapshot(c)
 	if err != nil {
 		return nil, err
@@ -375,14 +377,4 @@ func configureLink(name, tunnelIP, cidr string, mtu int) error {
 		return fmt.Errorf("경로를 넣지 못했다: %w", err)
 	}
 	return nil
-}
-
-// readKey는 개인키 파일을 읽는다. 설정 검사가 쓰는 것과 같은 함수로 연다.
-// 검사할 때 본 파일과 wg에 넣을 때 읽는 파일이 같아야 한다.
-func readKey(path string) (string, error) {
-	b, err := config.ReadSecret("개인키", path)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(b)), nil
 }

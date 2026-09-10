@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"os"
 	"strings"
 	"time"
 )
@@ -34,10 +33,10 @@ func (c *Config) checkSelf() []string {
 	if msg := checkDomain(s.Domain); msg != "" {
 		p = append(p, msg)
 	}
-	if s.PrivateKey == "" {
-		p = append(p, "csa.toml에 private-key가 없다")
-	} else if msg := checkSecretFile("개인키", s.PrivateKey); msg != "" {
-		p = append(p, msg)
+	// 개인키는 여기서 다시 열지 않는다. Secrets가 한 번 읽어 둔 것을 본다.
+	// 그 바이트를 wgdev도 그대로 쓴다.
+	if err := c.Secrets().PrivateErr; err != nil {
+		p = append(p, err.Error())
 	}
 	if s.ListenPort <= 0 || s.ListenPort > 65535 {
 		p = append(p, fmt.Sprintf("listen-port가 범위를 벗어났다: %d", s.ListenPort))
@@ -117,25 +116,6 @@ func checkGuard(g Guard) []string {
 // publicKey는 적어 둔 공개키를 읽어 다듬은 모양으로 돌려준다. csa가 wg에 설정을
 // 넣을 때 같은 것을 하는데, 그때 실패하면 이미 기동한 뒤라 운영자가 까닭을 찾기
 // 어렵다. 그래서 설정 검사에서 먼저 본다.
-// checkSecretFile은 비밀을 담은 파일이 안전한 자리에 있는지 본다.
-//
-// 있는지만 보아서는 모자란다. 디렉터리도 Stat을 지나고, 읽을 수 없는 파일도
-// 지난다. 무엇보다 0644인 개인키가 그대로 지나면 다른 사용자가 그 머신의
-// 신원을 가져갈 수 있다. csa가 만든 파일은 0600이지만 운영자가 다른 곳에서
-// 옮겨 온 파일은 그렇지 않다.
-//
-// 검사는 ReadSecret이 한다. csa가 실제로 그 파일을 읽을 때 쓰는 것과 같은
-// 함수다. 검사와 사용이 다른 길로 가면 그 사이에 파일이 바뀔 수 있다.
-func checkSecretFile(kind, path string) string {
-	if _, err := ReadSecret(kind, path); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Sprintf("%s 파일을 열 수 없다: %s", kind, path)
-		}
-		return err.Error()
-	}
-	return ""
-}
-
 // checkIface는 리눅스가 받아들이는 인터페이스 이름인지 본다.
 //
 // 커널이 이름을 15글자까지 받고 슬래시와 공백을 받지 않는다. 넘거나 어긋나면
@@ -392,11 +372,13 @@ func (c *Config) checkKeyPair() []string {
 	if self == nil || c.Self.PrivateKey == "" {
 		return nil // 다른 검사가 이미 잡는다
 	}
-	raw, err := ReadSecret("개인키", c.Self.PrivateKey)
-	if err != nil {
-		return nil // 파일이 없거나 안전하지 않은 것도 다른 검사가 잡는다
+	// 여기서 파일을 다시 읽지 않는다. wgdev가 wg에 넣을 바로 그 바이트로
+	// 짝을 확인해야 확인한 키와 쓰는 키가 같다.
+	sec := c.Secrets()
+	if sec.PrivateErr != nil {
+		return nil // 다른 검사가 이미 잡는다
 	}
-	priv, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(raw)))
+	priv, err := base64.StdEncoding.DecodeString(sec.Private)
 	if err != nil || len(priv) != 32 {
 		return []string{fmt.Sprintf("개인키 파일의 내용이 32바이트 base64가 아니다: %s", c.Self.PrivateKey)}
 	}
@@ -426,18 +408,18 @@ func (c *Config) checkPSK() []string {
 	if c.Self.PSK.Dir == "" {
 		return p
 	}
+	sec := c.Secrets()
 	for _, peer := range c.Peers {
 		if peer.PeerID == c.Self.PeerID {
 			continue
 		}
-		// LoadPSK가 파일을 열면서 개인키와 같은 검사를 함께 한다. 여기서
-		// 다시 열지 않는다. 두 번 열면 그 사이에 파일이 바뀔 수 있다.
-		_, ok, err := c.LoadPSK(peer.PeerID)
-		if err != nil {
+		// 여기서 파일을 열지 않는다. Secrets가 한 번 읽으면서 개인키와 같은
+		// 검사를 함께 했다. wg에 넣는 것도 그 바이트다.
+		if err := sec.PSKErr[peer.PeerID]; err != nil {
 			p = append(p, err.Error())
 			continue
 		}
-		if !ok && c.Self.PSK.Mode == "required" {
+		if _, ok := sec.PSK[peer.PeerID]; !ok && c.Self.PSK.Mode == "required" {
 			p = append(p, fmt.Sprintf("psk.mode가 required인데 사전 공유키가 없다: %s", c.PSKPath(peer.PeerID)))
 		}
 	}

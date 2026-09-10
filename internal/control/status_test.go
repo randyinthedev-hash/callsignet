@@ -117,3 +117,26 @@ func TestFormatWithNoPeers(t *testing.T) {
 		t.Errorf("상대가 없다는 것을 알려야 한다:\n%s", out)
 	}
 }
+
+// TestFormat보지못한것을적는다는 csa status가 「확인하지 못했다」를 함께 적는지
+// 본다.
+//
+// guard.mode가 off인데 nft를 찾지 못하면 csa는 남은 표가 있는지 보지 못한다.
+// 그 사실이 기동 로그에만 있으면 그때 화면을 본 사람만 안다. 뒤에 csa status로
+// 상태를 묻는 사람은 「닫지 않음」과 「막은 패킷 0개」만 보고 포트가 열려 있다고
+// 여긴다.
+func TestFormat보지못한것을적는다(t *testing.T) {
+	now := time.Now()
+	s := Status{PeerID: "srv-a", Since: now, Guard: "닫지 않음", GuardUnchecked: true}
+	out := Format(s, now)
+	if !strings.Contains(out, "보지 못했습니다") {
+		t.Errorf("보지 못했다는 것을 적지 않았다:\n%s", out)
+	}
+	if !strings.Contains(out, "아직 닫혀 있을") && !strings.Contains(out, "아직 닫혀 있습니다") {
+		t.Errorf("남은 규칙이 무엇을 뜻하는지 적지 않았다:\n%s", out)
+	}
+	// 확인한 자리에서는 이 줄이 없어야 한다.
+	if strings.Contains(Format(Status{PeerID: "srv-a", Since: now, Guard: "닫지 않음"}, now), "보지 못했습니다") {
+		t.Error("확인한 자리인데 보지 못했다고 적었다")
+	}
+}

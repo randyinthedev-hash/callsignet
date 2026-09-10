@@ -152,7 +152,11 @@ type Guard struct {
 	on   bool
 	nft  string // nft 명령의 자리
 	keep bool   // 멈출 때 규칙을 남길지
-	logf func(string, ...any)
+	// unchecked는 앞서 남은 표가 있는지 보지 못했다는 뜻이다. off인데 nft를
+	// 찾지 못한 자리에서 선다. 기동 로그에만 두면 그때 화면을 본 사람만 알게
+	// 되므로 csa status에도 이 값을 실어 보낸다.
+	unchecked bool
+	logf      func(string, ...any)
 }
 
 // findNft는 nft 명령을 찾는다. PATH에서 먼저 찾고, 없으면 sbin 자리들을 본다.
@@ -216,6 +220,7 @@ func (g *Guard) Apply(c Config) error {
 			return err
 		}
 		g.on = false
+		g.unchecked = !checked
 		if !checked {
 			g.logf("직통 경로를 닫지 않습니다. guard.mode가 off입니다." +
 				" 다만 nft를 찾지 못해 앞서 남은 규칙이 있는지 보지 못했습니다." +
@@ -232,6 +237,7 @@ func (g *Guard) Apply(c Config) error {
 		return err
 	}
 	g.nft = nft
+	g.unchecked = false
 	cmd := exec.Command(nft, "-f", "-")
 	cmd.Stdin = strings.NewReader(Ruleset(c))
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -339,6 +345,17 @@ func (g *Guard) Close() {
 
 // Mode는 지금 걸려 있는 모드다.
 func (g *Guard) Mode() Mode { return g.mode }
+
+// Unchecked는 앞서 남은 표가 있는지 보지 못했으면 참이다.
+//
+// guard.mode가 off인데 nft를 찾지 못한 자리에서 참이 된다. 그때 csa는 「닫지
+// 않는다」고 말하지만 옛 표가 남아 포트를 막고 있을 수 있다.
+func (g *Guard) Unchecked() bool {
+	if g == nil {
+		return false
+	}
+	return g.unchecked
+}
 
 // Blocked는 지금까지 막은 패킷 수다. nftables 계수기가 센 값이다.
 func (g *Guard) Blocked() uint64 {
