@@ -307,11 +307,12 @@ for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
     exit 1
   fi
 done
-# LINES는 기록에 남길 검사 결과다.
-LINES=""
+# SAID는 기록에 남길 검사 결과다. LINES는 bash가 터미널 높이로 쓰므로
+# 그 이름을 쓰면 값이 덮어써진다.
+SAID=""
 say() { # ok/틀림 설명
   if [ "$1" = ok ]; then printf '  ok    %s\n' "$2"; else printf '  틀림  %s\n' "$2"; VM_OK=0; fi
-  LINES="$LINES| $1 | $2 |
+  SAID="$SAID| $1 | $2 |
 "
 }
 # on_a와 on_b는 출력을 얻을 때 쓴다. 실패해도 스크립트가 멈추지 않도록 결과를
@@ -447,7 +448,7 @@ REPORT="$RESULTS/vm-$(date -u +%Y%m%dT%H%M%SZ).md"
   echo
   echo "| 결과 | 확인한 것 |"
   echo "|---|---|"
-  printf '%s' "$LINES"
+  printf '%s' "$SAID"
 } > "$REPORT"
 own "$REPORT"
 echo
