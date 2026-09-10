@@ -194,9 +194,17 @@ func (g *Guard) Check(c Config) error {
 func (g *Guard) Apply(c Config) error {
 	g.mode = c.Mode
 	if c.Mode == ModeOff {
-		if g.on {
-			g.Close()
+		// 이 객체가 건 표만 지워서는 모자란다. 앞서 돌던 csa가 남긴 표가
+		// 커널에 있을 수 있다. 반쯤 걸린 상태로 멈출 때 csa가 일부러 남기고,
+		// SIGKILL로 죽어도 남는다. 그 표는 계속 포트를 막는데 새 csa는
+		// 「닫지 않는다」고 알린다. 말과 실제가 어긋난다.
+		//
+		// 그래서 이 객체가 무엇을 걸었는지와 무관하게 지운다. 표가 없다는
+		// 답은 잘못이 아니다.
+		if err := removeTable(g.logf); err != nil {
+			return err
 		}
+		g.on = false
 		g.logf("직통 경로를 닫지 않습니다. guard.mode가 off입니다." +
 			" 이 머신의 서비스 포트는 터널 밖에서도 열려 있습니다.")
 		return nil
@@ -258,6 +266,37 @@ func (g *Guard) tell(c Config) {
 }
 
 // Close는 걸어 둔 표를 지운다. 조직의 다른 규칙은 건드리지 않는다.
+// removeTable은 커널에 있는 이 리포의 표를 지운다. 몇 번을 불러도 같다.
+//
+// 표가 없다는 답은 잘못이 아니다. 지우려던 것이 이미 없는 것이기 때문이다.
+// nft를 찾지 못하는 것도 잘못으로 보지 않는다. nft가 없는 머신에는 표도 없다.
+func removeTable(logf func(string, ...any)) error {
+	nft, err := findNft()
+	if err != nil {
+		return nil
+	}
+	out, err := exec.Command(nft, "delete", "table", "inet", tableName).CombinedOutput()
+	if err == nil {
+		logf("앞서 돌던 csa가 남긴 직통 경로 규칙을 지웠습니다.")
+		return nil
+	}
+	if missingTable(string(out)) {
+		return nil
+	}
+	return fmt.Errorf("남아 있는 직통 경로 규칙을 지우지 못했다: %v (%s)", err, strings.TrimSpace(string(out)))
+}
+
+// missingTable은 nft가 「그런 표가 없다」고 답했는지 본다. 배포판마다 문구가
+// 달라 몇 가지를 함께 본다.
+func missingTable(out string) bool {
+	for _, s := range []string{"No such file or directory", "does not exist", "그런 파일이나 디렉터리가 없습니다"} {
+		if strings.Contains(out, s) {
+			return true
+		}
+	}
+	return false
+}
+
 // Keep은 멈출 때 규칙을 지우지 말라고 이른다.
 //
 // csa가 반쯤 걸린 상태로 멈출 때 쓴다. 그때 규칙까지 지우면 이 머신의 서비스

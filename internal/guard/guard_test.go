@@ -1,6 +1,9 @@
 package guard
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -133,5 +136,66 @@ func TestCountOf(t *testing.T) {
 	}
 	if got := countOf([]byte("JSON이 아니다")); got != 0 {
 		t.Errorf("읽지 못하면 0이어야 하는데 %d", got)
+	}
+}
+
+// fakeNft는 PATH에 가짜 nft를 놓고 그것이 받은 인자를 적어 둔다. 진짜 nft는
+// root가 있어야 돌므로 단위 시험에서 쓸 수 없다.
+func fakeNft(t *testing.T, exitCode int, stderr string) (calls func() string) {
+	t.Helper()
+	dir := t.TempDir()
+	// 이름에 빈칸을 두지 않는다. 셸의 방향 바꾸기에서 갈라진다.
+	log := filepath.Join(dir, "부른것")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + strconv.Quote(log) + "\n"
+	if stderr != "" {
+		script += "printf '%s\\n' " + strconv.Quote(stderr) + " >&2\n"
+	}
+	script += "exit " + strconv.Itoa(exitCode) + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "nft"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	return func() string {
+		b, err := os.ReadFile(log)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
+}
+
+// TestOff앞서남은표를지운다는 앞서 돌던 csa가 남긴 표를 새 csa가 지우는지 본다.
+//
+// 반쯤 걸린 상태로 멈출 때 csa는 표를 일부러 남긴다. 운영자가 그것을 풀려고
+// guard.mode를 off로 바꿔 다시 띄우는데, 새 Guard 객체는 자기가 건 것이 없다고
+// 여겨 아무것도 지우지 않았다. 그러면 csa는 「닫지 않는다」고 알리면서 실제로는
+// 앞선 표가 계속 포트를 막는다.
+func TestOff앞서남은표를지운다(t *testing.T) {
+	calls := fakeNft(t, 0, "")
+	g := New(func(string, ...any) {})
+	if err := g.Apply(Config{Mode: ModeOff}); err != nil {
+		t.Fatalf("off를 걸지 못했다: %v", err)
+	}
+	got := calls()
+	if !strings.Contains(got, "delete table inet callsignet") {
+		t.Fatalf("남은 표를 지우지 않았다. nft를 부른 것: %q", got)
+	}
+}
+
+// TestOff표가없어도잘못이아니다는 지우려던 것이 이미 없는 자리를 본다.
+func TestOff표가없어도잘못이아니다(t *testing.T) {
+	fakeNft(t, 1, "Error: No such file or directory")
+	g := New(func(string, ...any) {})
+	if err := g.Apply(Config{Mode: ModeOff}); err != nil {
+		t.Fatalf("표가 없는 것을 잘못으로 보았다: %v", err)
+	}
+}
+
+// TestOff지우지못하면알린다는 다른 까닭으로 실패한 것을 삼키지 않는지 본다.
+func TestOff지우지못하면알린다(t *testing.T) {
+	fakeNft(t, 1, "Error: Could not process rule: Operation not permitted")
+	g := New(func(string, ...any) {})
+	if err := g.Apply(Config{Mode: ModeOff}); err == nil {
+		t.Fatal("지우지 못했는데 걸었다고 했다")
 	}
 }
