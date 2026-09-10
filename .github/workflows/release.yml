@@ -71,4 +71,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
             --notes "무엇을 만들었는지는 [릴리스 노트](RELEASE_NOTES.md)에 있습니다. 붙인 것은 정적으로 링크한 리눅스 바이너리입니다." \
-            csa-linux-amd64 csa-linux-arm64 sha256sum.txt
+            csa-linux-amd64 csa-linux-arm64 sha256sum.txt THIRD-PARTY-NOTICES.md
