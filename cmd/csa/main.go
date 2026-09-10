@@ -27,7 +27,7 @@ import (
 
 // Version은 이 csa의 판이다. 설정 파일의 모양과 csa status가 내놓는 값이 판마다
 // 달라질 수 있으므로, 다른 프로그램이 csa를 부릴 때 이 값을 보고 맞춘다.
-const Version = "0.1.0"
+const Version = "0.1.1"
 
 const usage = `csa — Callsignet agent
 
