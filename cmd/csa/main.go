@@ -73,6 +73,26 @@ func main() {
 	}
 }
 
+// writeSecret은 비밀을 담은 파일을 새로 만든다.
+//
+// 이미 있는 파일에 os.WriteFile로 쓰면 그 파일의 권한은 그대로 남는다. 0644인
+// 파일에 개인키를 쓰고도 「소유자만 읽을 수 있습니다」라고 찍는 일이 생긴다.
+// O_EXCL로 만들면 그런 일이 없고, 쓰던 신원 키를 조용히 덮어쓰는 일도 없다.
+func writeSecret(path, body string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("그 자리에 파일이 이미 있다. 덮어쓰지 않는다: %s", path)
+		}
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(body); err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 func runCheck(args []string) error {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
 	dir := fs.String("c", "/etc/callsignet", "설정 디렉터리")
@@ -282,19 +302,48 @@ func reload(dir string, live *atomic.Pointer[config.Config], dev *wgdev.Device,
 	if err != nil {
 		return "", fmt.Errorf("%w. 아무것도 바꾸지 않았다", err)
 	}
+	// 규칙을 걸기 전에 nft가 받아들이는지 먼저 본다. 거는 것이 마지막 걸음이라
+	// 거기서 실패하면 앞서 바꾼 것이 이미 걸려 있게 된다.
+	if err := gd.Check(guardConfig(cur)); err != nil {
+		return "", fmt.Errorf("%w. 아무것도 바꾸지 않았다", err)
+	}
+
+	old := live.Load()
 	if err := dev.Reload(cur); err != nil {
-		return "", err
+		return "", back(old, dev, dnsSrv, gd, err, logf)
 	}
 	dnsSrv.SetTable(table)
 	// 이 머신의 서비스 목록이 바뀌었으면 닫을 포트도 바뀐다.
 	if err := gd.Apply(guardConfig(cur)); err != nil {
-		return "", err
+		return "", back(old, dev, dnsSrv, gd, err, logf)
 	}
 	live.Store(cur)
 
 	report := reloadReport(ch)
 	logf("설정을 다시 읽었습니다. %s", strings.ReplaceAll(strings.TrimSpace(report), "\n", " "))
 	return report, nil
+}
+
+// back은 설정을 걸다 실패했을 때 앞서 걸려 있던 것으로 되돌린다.
+//
+// 설정을 거는 일은 세 걸음이다. wg의 상대와 정책을 바꾸고, 이름 표를 바꾸고,
+// 직통 경로 규칙을 건다. 그 사이에서 실패했을 때 되돌리지 않으면, csa는 새
+// 정책을 집행하면서 csa status는 옛 설정을 말한다. 새 정책이 권한을 넓히는
+// 것이면 운영자는 그것이 걸리지 않았다고 여긴다.
+func back(old *config.Config, dev *wgdev.Device, dnsSrv *name.Server, gd *guard.Guard,
+	cause error, logf func(string, ...any)) error {
+	table, terr := name.NewTable(old)
+	if terr == nil {
+		dnsSrv.SetTable(table)
+	}
+	rerr := dev.Reload(old)
+	gerr := gd.Apply(guardConfig(old))
+	if terr == nil && rerr == nil && gerr == nil {
+		logf("설정을 걸지 못해 앞서 걸려 있던 것으로 되돌렸습니다.")
+		return fmt.Errorf("%w. 앞서 걸려 있던 설정으로 되돌렸다", cause)
+	}
+	logf("설정을 걸지 못했고 되돌리지도 못했습니다. 이 머신은 반쯤 걸린 상태입니다.")
+	return fmt.Errorf("%w. 되돌리지도 못했다. 이 머신은 반쯤 걸린 상태다. csa를 다시 띄우라", cause)
 }
 
 func reloadReport(c config.Changes) string {
@@ -388,7 +437,7 @@ func runGenpsk(args []string) error {
 		fmt.Println(key)
 		return nil
 	}
-	if err := os.WriteFile(*out, []byte(key+"\n"), 0o600); err != nil {
+	if err := writeSecret(*out, key+"\n"); err != nil {
 		return err
 	}
 	fmt.Printf("사전 공유키를 %s에 썼습니다. 소유자만 읽을 수 있습니다.\n", *out)
@@ -422,7 +471,7 @@ func runGenkey(args []string) error {
 		fmt.Fprintln(os.Stderr, "공개키:", pubB64)
 		return nil
 	}
-	if err := os.WriteFile(*out, []byte(privB64+"\n"), 0o600); err != nil {
+	if err := writeSecret(*out, privB64+"\n"); err != nil {
 		return err
 	}
 	fmt.Printf("개인키를 %s에 썼습니다. 소유자만 읽을 수 있습니다.\n", *out)

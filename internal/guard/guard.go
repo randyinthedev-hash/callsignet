@@ -170,6 +170,26 @@ func New(logf func(string, ...any)) *Guard {
 
 // Apply는 규칙을 건다. 이미 걸려 있으면 새 규칙으로 갈아 끼운다. csa reload가
 // 서비스 목록을 바꾸면 여기도 다시 부른다.
+// Check는 규칙을 걸지 않고 nft가 받아들이는지만 본다.
+//
+// 설정을 다시 읽는 일은 여러 걸음이다. 마지막 걸음인 규칙 걸기가 실패하면
+// 앞서 바꾼 것이 이미 걸려 있게 된다. 그래서 아무것도 바꾸기 전에 먼저 본다.
+func (g *Guard) Check(c Config) error {
+	if c.Mode == ModeOff {
+		return nil
+	}
+	nft, err := findNft()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(nft, "-c", "-f", "-")
+	cmd.Stdin = strings.NewReader(Ruleset(c))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("nft가 이 규칙을 받아들이지 않는다: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (g *Guard) Apply(c Config) error {
 	g.mode = c.Mode
 	if c.Mode == ModeOff {

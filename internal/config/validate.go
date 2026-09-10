@@ -28,9 +28,11 @@ func (c *Config) checkSelf() []string {
 	s := c.Self
 	if s.PeerID == "" {
 		p = append(p, "csa.toml에 peer-id가 없다")
+	} else if msg := checkLabel("peer-id", s.PeerID); msg != "" {
+		p = append(p, msg)
 	}
-	if s.Domain == "" {
-		p = append(p, "csa.toml에 domain이 없다")
+	if msg := checkDomain(s.Domain); msg != "" {
+		p = append(p, msg)
 	}
 	if s.PrivateKey == "" {
 		p = append(p, "csa.toml에 private-key가 없다")
@@ -42,8 +44,22 @@ func (c *Config) checkSelf() []string {
 	}
 	if s.DNS.Listen == "" {
 		p = append(p, "csa.toml에 dns.listen이 없다")
-	} else if _, err := netip.ParseAddrPort(s.DNS.Listen); err != nil {
+	} else if ap, err := netip.ParseAddrPort(s.DNS.Listen); err != nil {
 		p = append(p, fmt.Sprintf("dns.listen을 읽을 수 없다: %s", s.DNS.Listen))
+	} else {
+		// resolv.conf의 nameserver 줄에는 포트를 적을 수 없다. 53이 아니면
+		// 리졸버가 csa에 묻지 못한다.
+		if ap.Port() != 53 {
+			p = append(p, fmt.Sprintf("dns.listen의 포트는 53이어야 한다: %s", s.DNS.Listen))
+		}
+		// 이 이름 해석기는 이 머신 안에서만 쓴다. 밖으로 열면 조직의 내부
+		// 이름을 아무나 물어볼 수 있다.
+		if !ap.Addr().IsLoopback() {
+			p = append(p, fmt.Sprintf("dns.listen은 루프백 주소여야 한다: %s", s.DNS.Listen))
+		}
+	}
+	if s.ListenPort == 53 {
+		p = append(p, "listen-port를 53으로 둘 수 없다. csa가 그 포트에서 이름 해석을 받는다")
 	}
 	if s.Tun.MTU != 0 && (s.Tun.MTU < 1280 || s.Tun.MTU > 1500) {
 		p = append(p, fmt.Sprintf("tun.mtu가 범위를 벗어났다: %d", s.Tun.MTU))
@@ -61,6 +77,11 @@ func (c *Config) checkSelf() []string {
 	if !cidr.Addr().Is4() {
 		p = append(p, fmt.Sprintf("tunnel-cidr는 IPv4여야 한다: %s", s.TunnelCIDR))
 		return p
+	}
+	// csa는 이 대역으로 역방향 구역을 만들어 이름 해석기에 등록한다. 8비트
+	// 단위가 아니면 구역 이름을 만들 수 없어 기동하지 못한다.
+	if b := cidr.Bits(); b == 0 || b%8 != 0 {
+		p = append(p, fmt.Sprintf("tunnel-cidr는 /8, /16, /24처럼 8비트 단위여야 한다: %s", s.TunnelCIDR))
 	}
 	// 이 머신이 이미 쓰는 대역과 겹치면 원래 가던 트래픽이 터널로 들어간다.
 	for _, local := range localPrefixes(s.TunName()) {
@@ -93,6 +114,48 @@ func checkGuard(g Guard) []string {
 // publicKey는 적어 둔 공개키를 읽어 다듬은 모양으로 돌려준다. csa가 wg에 설정을
 // 넣을 때 같은 것을 하는데, 그때 실패하면 이미 기동한 뒤라 운영자가 까닭을 찾기
 // 어렵다. 그래서 설정 검사에서 먼저 본다.
+// checkLabel은 DNS 이름의 한 조각으로 쓸 수 있는지 본다.
+//
+// peer-id와 app은 이름 해석기의 표에 들어가고, 표는 이름을 소문자로 바꾼다.
+// 그대로 두면 Srv-A와 srv-a가 설정 검사를 지나 표에서 부딪힌다. peer-id는
+// 제어 소켓의 경로와 사전 공유키 파일의 이름에도 그대로 들어가므로 /와 ..
+// 같은 글자도 막아야 한다. DNS 조각의 규칙이 그 둘을 함께 막는다.
+func checkLabel(kind, v string) string {
+	if v == "" {
+		return kind + "가 비어 있다"
+	}
+	if len(v) > 63 {
+		return fmt.Sprintf("%s가 63글자를 넘는다: %s", kind, v)
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		ok := (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
+		if !ok {
+			return fmt.Sprintf("%s에는 소문자와 숫자와 붙임표만 쓸 수 있다: %s", kind, v)
+		}
+	}
+	if v[0] == '-' || v[len(v)-1] == '-' {
+		return fmt.Sprintf("%s는 붙임표로 시작하거나 끝날 수 없다: %s", kind, v)
+	}
+	return ""
+}
+
+// checkDomain은 도메인이 DNS 이름의 모양인지 본다.
+func checkDomain(v string) string {
+	if v == "" {
+		return "csa.toml에 domain이 없다"
+	}
+	if len(v) > 253 {
+		return "domain이 253글자를 넘는다: " + v
+	}
+	for _, label := range strings.Split(v, ".") {
+		if msg := checkLabel("domain의 조각", label); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
 func publicKey(b64 string) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
 	if err != nil {
@@ -118,6 +181,9 @@ func (c *Config) checkPeers() []string {
 		if peer.PeerID == "" {
 			p = append(p, "peer-id가 없는 항목이 있다")
 			continue
+		}
+		if msg := checkLabel("peer-id", peer.PeerID); msg != "" {
+			p = append(p, msg)
 		}
 		if seenID[peer.PeerID] {
 			p = append(p, fmt.Sprintf("peer-id가 두 번 나온다: %s", peer.PeerID))
@@ -167,6 +233,12 @@ func (c *Config) checkPeers() []string {
 		for _, svc := range peer.Services {
 			if svc.App == "" {
 				p = append(p, fmt.Sprintf("%s에 이름 없는 service가 있다", peer.PeerID))
+			} else if msg := checkLabel("app", svc.App); msg != "" {
+				p = append(p, msg)
+			}
+			// csa는 터널 IP의 53번 포트에서도 이름 해석을 받는다.
+			if svc.Port == 53 {
+				p = append(p, fmt.Sprintf("서비스 포트를 53으로 둘 수 없다: %s의 %s", peer.PeerID, svc.App))
 			}
 			if seenApp[svc.App] {
 				p = append(p, fmt.Sprintf("app이 두 번 나온다: %s의 %s", peer.PeerID, svc.App))

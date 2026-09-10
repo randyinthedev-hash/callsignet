@@ -171,6 +171,19 @@ func (c *Config) LoadPSK(peerID string) (string, bool, error) {
 	if err != nil || len(raw) != 32 {
 		return "", true, fmt.Errorf("사전 공유키가 32바이트 base64가 아니다: %s", path)
 	}
+	// wg에서 전부 0인 키는 키를 쓰지 않는 것과 같다. 그런 파일을 받아들이면
+	// psk.mode가 required인데도 실제로는 키 없이 세션이 서고, csa status는
+	// 키를 쓴다고 말한다.
+	var zero bool = true
+	for _, b := range raw {
+		if b != 0 {
+			zero = false
+			break
+		}
+	}
+	if zero {
+		return "", true, fmt.Errorf("사전 공유키가 전부 0이다. wg에서는 키를 쓰지 않는 것과 같다: %s", path)
+	}
 	return key, true, nil
 }
 

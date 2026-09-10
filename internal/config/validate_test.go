@@ -84,6 +84,16 @@ func TestValidate(t *testing.T) {
 		{"공개키가 32바이트가 아니다", func(c *Config) { c.Peers[1].PublicKey = "aGVsbG8=" }, "32바이트"},
 		{"터널 IP가 IPv6다", func(c *Config) { c.Peers[1].TunnelIP = "fd00::2" }, "IPv4여야 한다"},
 		{"터널 대역이 IPv6다", func(c *Config) { c.Self.TunnelCIDR = "fd00::/64" }, "IPv4여야 한다"},
+		{"터널 대역이 8비트 단위가 아니다", func(c *Config) { c.Self.TunnelCIDR = "10.91.0.0/25" }, "8비트 단위"},
+		{"dns.listen의 포트가 53이 아니다", func(c *Config) { c.Self.DNS.Listen = "127.0.53.1:5353" }, "포트는 53"},
+		{"dns.listen이 루프백이 아니다", func(c *Config) { c.Self.DNS.Listen = "10.0.0.5:53" }, "루프백"},
+		{"listen-port가 53이다", func(c *Config) { c.Self.ListenPort = 53 }, "53으로 둘 수 없다"},
+		{"서비스 포트가 53이다", func(c *Config) { c.Peers[0].Services[0].Port = 53 }, "53으로 둘 수 없다"},
+		{"peer-id에 대문자가 있다", func(c *Config) { c.Peers[1].PeerID = "Srv-B" }, "소문자와 숫자와 붙임표"},
+		{"peer-id에 경로 글자가 있다", func(c *Config) { c.Peers[1].PeerID = "../etc/x" }, "소문자와 숫자와 붙임표"},
+		{"peer-id에 점이 있다", func(c *Config) { c.Peers[1].PeerID = "srv.b" }, "소문자와 숫자와 붙임표"},
+		{"app에 점이 있다", func(c *Config) { c.Peers[0].Services[0].App = "bill.ing" }, "소문자와 숫자와 붙임표"},
+		{"도메인의 조각이 잘못됐다", func(c *Config) { c.Self.Domain = "cs..example" }, "domain의 조각"},
 		{"peer-id가 두 번 나온다", func(c *Config) { c.Peers[1].PeerID = "srv-a" }, "두 번 나온다"},
 		{"개인키 파일이 없다", func(c *Config) { c.Self.PrivateKey = "/없는/경로" }, "개인키 파일"},
 		{"접속 주소를 읽을 수 없다", func(c *Config) { c.Peers[1].Endpoints = []string{"바보"} }, "endpoint"},
@@ -188,5 +198,33 @@ allow = ["srv-a"]
 	}
 	if c.Find("srv-a") == nil || c.Find("없음") != nil {
 		t.Fatal("Find가 잘못 찾는다")
+	}
+}
+
+// TestLoadPSK전부0인키를거절한다는 wg에서 전부 0인 사전 공유키가 키를 쓰지
+// 않는 것과 같기 때문이다. 그런 파일을 받아들이면 psk.mode가 required인데도
+// 키 없이 세션이 서고 csa status는 키를 쓴다고 말한다.
+func TestLoadPSK전부0인키를거절한다(t *testing.T) {
+	dir := t.TempDir()
+	c := &Config{
+		Self:  Self{PeerID: "srv-a", PSK: PSK{Dir: dir, Mode: "required"}},
+		Peers: []Peer{{PeerID: "srv-b"}},
+	}
+	zero := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	if err := os.WriteFile(filepath.Join(dir, "srv-b.key"), []byte(zero+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.LoadPSK("srv-b"); err == nil {
+		t.Fatal("전부 0인 사전 공유키를 받아들였다")
+	}
+
+	good := make([]byte, 32)
+	good[0] = 1
+	if err := os.WriteFile(filepath.Join(dir, "srv-b.key"),
+		[]byte(base64.StdEncoding.EncodeToString(good)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := c.LoadPSK("srv-b"); err != nil || !ok {
+		t.Fatalf("바른 키를 거절했다: %v", err)
 	}
 }
