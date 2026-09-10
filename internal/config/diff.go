@@ -18,12 +18,19 @@ type Changes struct {
 	// 것이다. 이것도 도는 중에 바꿀 수 없다. 자기 서비스 목록이 바뀐 것은
 	// 여기에 들지 않는다. 그것은 걸 수 있다.
 	SelfPeerChanged bool
+
+	// PSKPeers는 사전 공유키가 바뀐 상대다. 이 값은 TOML이 아니라 파일에 있다.
+	// csa.toml과 peers.toml과 policy.toml만 견주면 키를 갈아 끼운 것이 드러나지
+	// 않는다. 그러면 csa는 「바뀐 것이 없습니다」라고 답하고 옛 키로 계속 돈다.
+	//
+	// 상대의 이름만 담는다. 키 자체를 담으면 보고와 로그로 새어 나간다.
+	PSKPeers []string
 }
 
 // Any는 바뀐 것이 하나라도 있는지 알려준다.
 func (c Changes) Any() bool {
 	return len(c.AddedPeers) > 0 || len(c.RemovedPeers) > 0 || len(c.ChangedPeers) > 0 ||
-		c.PolicyChanged || c.SelfChanged || c.SelfPeerChanged
+		len(c.PSKPeers) > 0 || c.PolicyChanged || c.SelfChanged || c.SelfPeerChanged
 }
 
 // Diff는 두 설정을 견준다. peer는 peer-id로 짝을 맞춘다.
@@ -31,6 +38,7 @@ func Diff(old, cur *Config) Changes {
 	var c Changes
 	c.SelfChanged = !sameSelf(old.Self, cur.Self)
 	c.PolicyChanged = !samePolicy(old.Policy, cur.Policy)
+	c.PSKPeers = changedPSK(old, cur)
 
 	oldByID := byID(old.Peers)
 	curByID := byID(cur.Peers)
@@ -60,6 +68,30 @@ func Diff(old, cur *Config) Changes {
 	sort.Strings(c.RemovedPeers)
 	sort.Strings(c.ChangedPeers)
 	return c
+}
+
+// changedPSK는 사전 공유키가 바뀐 상대를 찾는다.
+//
+// 두 설정이 이미 읽어 둔 값을 견준다. 여기서 파일을 새로 읽지 않는다. 도는 csa가
+// 쓰고 있는 키와 새로 읽은 키를 견주어야 하는데, 도는 csa가 쓰는 것은 그 설정이
+// 읽어 둔 값이기 때문이다.
+func changedPSK(old, cur *Config) []string {
+	a, b := old.Secrets().PSK, cur.Secrets().PSK
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range []map[string]string{a, b} {
+		for id := range m {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			if a[id] != b[id] {
+				out = append(out, id)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // sameSelf는 csa.toml에서 온 값이 같은지 본다. Guard가 슬라이스를 담고 있어

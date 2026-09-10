@@ -341,8 +341,23 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover,
 // 사실을 알린다. 반쯤 걸면 운영자가 무엇이 도는지 알 수 없다.
 //
 // 검사에 걸린 설정도 걸지 않는다. csa는 앞서 읽은 설정 그대로 계속 돈다.
-func reload(dir string, live *atomic.Pointer[config.Config], dev *wgdev.Device,
-	dnsSrv *name.Server, gd *guard.Guard, logf func(string, ...any)) (string, error) {
+// reload가 거는 자리 셋이다. 시험이 갈아 끼울 수 있게 인터페이스로 둔다. 진짜
+// 것은 TUN 인터페이스와 nft를 건드리므로 단위 시험에서 쓸 수 없다.
+type device interface {
+	Reload(*config.Config) error
+}
+
+type resolver interface {
+	SetTable(*name.Table)
+}
+
+type gate interface {
+	Check(guard.Config) error
+	Apply(guard.Config) error
+}
+
+func reload(dir string, live *atomic.Pointer[config.Config], dev device,
+	dnsSrv resolver, gd gate, logf func(string, ...any)) (string, error) {
 
 	cur, err := config.Load(dir)
 	if err != nil {
@@ -401,7 +416,7 @@ var errMixed = errors.New("이 머신은 반쯤 걸린 상태다")
 // 직통 경로 규칙을 건다. 그 사이에서 실패했을 때 되돌리지 않으면, csa는 새
 // 정책을 집행하면서 csa status는 옛 설정을 말한다. 새 정책이 권한을 넓히는
 // 것이면 운영자는 그것이 걸리지 않았다고 여긴다.
-func back(old *config.Config, dev *wgdev.Device, dnsSrv *name.Server, gd *guard.Guard,
+func back(old *config.Config, dev device, dnsSrv resolver, gd gate,
 	cause error, logf func(string, ...any)) error {
 	return rollback(cause, logf,
 		func() error {
@@ -448,6 +463,9 @@ func reloadReport(c config.Changes) string {
 	}
 	if len(c.ChangedPeers) > 0 {
 		fmt.Fprintf(&b, "  고친 상대: %s\n", strings.Join(c.ChangedPeers, ", "))
+	}
+	if len(c.PSKPeers) > 0 {
+		fmt.Fprintf(&b, "  사전 공유키를 바꾼 상대: %s\n", strings.Join(c.PSKPeers, ", "))
 	}
 	if c.PolicyChanged {
 		b.WriteString("  정책을 바꾸었습니다.\n")

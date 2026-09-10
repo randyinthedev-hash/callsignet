@@ -1,6 +1,12 @@
 package config
 
-import "testing"
+import (
+	"bytes"
+	"encoding/base64"
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 // 같은 설정 둘을 만든다. good은 부를 때마다 다른 임시 디렉터리에 개인키를
 // 만들므로, 그대로 견주면 csa.toml이 바뀐 것으로 나온다.
@@ -113,5 +119,52 @@ func TestDiffAllowsSelfServiceChange(t *testing.T) {
 	}
 	if len(c.ChangedPeers) != 1 || c.ChangedPeers[0] != "srv-a" {
 		t.Errorf("고친 상대로 세야 하는데 %+v", c)
+	}
+}
+
+// TestDiff사전공유키가바뀐것을찾는다는 파일에만 있는 값의 차이를 잡는지 본다.
+//
+// 사전 공유키는 TOML이 아니라 파일에 있다. csa.toml과 peers.toml과 policy.toml만
+// 견주면 운영자가 키를 갈아 끼운 것이 드러나지 않는다.
+func TestDiff사전공유키가바뀐것을찾는다(t *testing.T) {
+	dir := t.TempDir()
+	pskDir := filepath.Join(dir, "psk")
+	if err := os.Mkdir(pskDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(fill byte) {
+		t.Helper()
+		key := bytes.Repeat([]byte{fill}, 32)
+		body := base64.StdEncoding.EncodeToString(key) + "\n"
+		if err := os.WriteFile(filepath.Join(pskDir, "srv-b.key"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk := func() *Config {
+		return &Config{
+			Self:  Self{PeerID: "srv-a", PSK: PSK{Dir: pskDir, Mode: "required"}},
+			Peers: []Peer{{PeerID: "srv-a"}, {PeerID: "srv-b"}},
+		}
+	}
+
+	write(1)
+	old := mk()
+	if _, ok := old.Secrets().PSK["srv-b"]; !ok {
+		t.Fatal("첫 키를 읽지 못했다")
+	}
+
+	write(2)
+	cur := mk()
+	ch := Diff(old, cur)
+	if len(ch.PSKPeers) != 1 || ch.PSKPeers[0] != "srv-b" {
+		t.Fatalf("키가 바뀐 상대를 찾지 못했다: %v", ch.PSKPeers)
+	}
+	if !ch.Any() {
+		t.Fatal("키만 바뀐 것을 「바뀐 것이 없다」로 보았다")
+	}
+
+	// 같은 키를 읽은 둘은 바뀐 것이 없다.
+	if ch := Diff(cur, mk()); len(ch.PSKPeers) != 0 || ch.Any() {
+		t.Fatalf("같은 키인데 바뀌었다고 했다: %v", ch.PSKPeers)
 	}
 }

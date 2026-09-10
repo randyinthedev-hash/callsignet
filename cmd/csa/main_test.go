@@ -1,13 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"crypto/ecdh"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+
+	"github.com/randyinthedev-hash/callsignet/internal/config"
+	"github.com/randyinthedev-hash/callsignet/internal/guard"
+	"github.com/randyinthedev-hash/callsignet/internal/name"
 )
 
 // TestWriteSecret이미있으면만들지않는다는 쓰던 신원 키를 조용히 덮어쓰지 않게
@@ -177,4 +185,160 @@ func TestWaitStop(t *testing.T) {
 			t.Fatal("신호로 멈추는데 규칙을 남겼다")
 		}
 	})
+}
+
+// 시험에서 쓰는 대역 셋이다. 진짜 것은 TUN 인터페이스와 nft를 건드린다.
+type fakeDevice struct{ reloads int }
+
+func (d *fakeDevice) Reload(*config.Config) error { d.reloads++; return nil }
+
+type fakeResolver struct{ sets int }
+
+func (r *fakeResolver) SetTable(*name.Table) { r.sets++ }
+
+type fakeGate struct{ checks, applies int }
+
+func (g *fakeGate) Check(guard.Config) error { g.checks++; return nil }
+func (g *fakeGate) Apply(guard.Config) error { g.applies++; return nil }
+
+// 정해진 값에서 키 짝을 만든다.
+func keyPair(t *testing.T, fill byte) (priv, pub string) {
+	t.Helper()
+	k, err := ecdh.X25519().NewPrivateKey(bytes.Repeat([]byte{fill}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.StdEncoding.EncodeToString(k.Bytes()),
+		base64.StdEncoding.EncodeToString(k.PublicKey().Bytes())
+}
+
+// 설정 한 벌을 만든다. csa reload가 실제로 읽는 파일 셋이다.
+func configDir(t *testing.T) (dir string, writePSK func(fill byte)) {
+	t.Helper()
+	dir = t.TempDir()
+	privA, pubA := keyPair(t, 1)
+	_, pubB := keyPair(t, 2)
+
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("private.key", privA+"\n")
+	pskDir := filepath.Join(dir, "psk")
+	if err := os.Mkdir(pskDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	write("csa.toml", fmt.Sprintf(`peer-id     = "srv-a"
+private-key = %q
+domain      = "cs.test.internal"
+tunnel-cidr = "10.91.0.0/24"
+listen-port = 51820
+
+[tun]
+name = "cs0"
+mtu  = 1420
+
+[dns]
+listen = "127.0.53.1:53"
+
+[psk]
+dir  = %q
+mode = "required"
+`, filepath.Join(dir, "private.key"), pskDir))
+	write("peers.toml", fmt.Sprintf(`[[peer]]
+peer-id    = "srv-a"
+public-key = %q
+tunnel-ip  = "10.91.0.1"
+endpoints  = ["10.90.0.1:51820"]
+services   = [{ app = "billing", port = 8080 }]
+
+[[peer]]
+peer-id    = "srv-b"
+public-key = %q
+tunnel-ip  = "10.91.0.2"
+endpoints  = ["10.90.0.2:51820"]
+services   = [{ app = "report", port = 8080 }]
+`, pubA, pubB))
+	write("policy.toml", `outbound = ["srv-b/report"]
+
+[[inbound]]
+app   = "billing"
+allow = ["srv-b"]
+`)
+	writePSK = func(fill byte) {
+		t.Helper()
+		key := bytes.Repeat([]byte{fill}, 32)
+		body := base64.StdEncoding.EncodeToString(key) + "\n"
+		if err := os.WriteFile(filepath.Join(pskDir, "srv-b.key"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir, writePSK
+}
+
+// TestReload사전공유키를바꾸면다시건다는 운영자가 키를 갈아 끼우고 csa reload를
+// 했을 때 csa가 그것을 실제로 거는지 본다.
+//
+// 사전 공유키는 TOML이 아니라 파일에 있다. 앞서는 csa.toml과 peers.toml과
+// policy.toml만 견주어, 키만 바뀐 자리에서 csa가 「바뀐 것이 없습니다」라고
+// 답하고 옛 키로 계속 돌았다. 운영자는 새 키가 걸렸다고 여긴다.
+//
+// 이 시험은 맨 위의 reload를 부른다. wg에 거는 부분만 따로 보면 그 앞에서
+// 막히는 이 자리를 잡지 못한다.
+func TestReload사전공유키를바꾸면다시건다(t *testing.T) {
+	dir, writePSK := configDir(t)
+	quiet := func(string, ...any) {}
+
+	writePSK(1)
+	old, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := old.Validate(); len(p) > 0 {
+		t.Fatalf("설정이 어긋났다: %v", p)
+	}
+	// 도는 csa가 쓰는 키다. 여기서 한 번 읽어 둔다.
+	if _, ok := old.Secrets().PSK["srv-b"]; !ok {
+		t.Fatal("첫 사전 공유키를 읽지 못했다")
+	}
+	var live atomic.Pointer[config.Config]
+	live.Store(old)
+
+	// TOML은 그대로 두고 키만 다른 유효한 값으로 바꾼다.
+	writePSK(2)
+
+	dev, res, gd := &fakeDevice{}, &fakeResolver{}, &fakeGate{}
+	report, err := reload(dir, &live, dev, res, gd, quiet)
+	if err != nil {
+		t.Fatalf("다시 읽지 못했다: %v", err)
+	}
+	if dev.reloads != 1 {
+		t.Fatalf("바뀐 키를 wg에 걸지 않았다. Reload를 부른 횟수 %d", dev.reloads)
+	}
+	if gd.applies != 1 {
+		t.Fatalf("직통 경로 규칙을 다시 걸지 않았다: %d", gd.applies)
+	}
+	if !strings.Contains(report, "사전 공유키를 바꾼 상대: srv-b") {
+		t.Fatalf("무엇이 바뀌었는지 알리지 않았다: %q", report)
+	}
+	if live.Load() == old {
+		t.Fatal("새 설정을 걸지 않았다")
+	}
+	if got := live.Load().Secrets().PSK["srv-b"]; got == old.Secrets().PSK["srv-b"] {
+		t.Fatal("옛 키를 그대로 들고 있다")
+	}
+
+	// 아무것도 바꾸지 않으면 다시 걸지 않는다.
+	report, err = reload(dir, &live, dev, res, gd, quiet)
+	if err != nil {
+		t.Fatalf("다시 읽지 못했다: %v", err)
+	}
+	if dev.reloads != 1 {
+		t.Fatalf("바뀐 것이 없는데 다시 걸었다: %d", dev.reloads)
+	}
+	if !strings.Contains(report, "바뀐 것이 없습니다") {
+		t.Fatalf("바뀐 것이 없다고 알리지 않았다: %q", report)
+	}
 }
