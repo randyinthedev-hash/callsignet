@@ -119,14 +119,14 @@ mode = "required"
 ```toml
 [[peer]]
 peer-id    = "srv-billing-01"
-public-key = "SG9sZCB0aGlzIGtleSBoZXJlLCBwbGVhc2Uu"
+public-key = "ZXhhbXBsZSBwdWJsaWMga2V5IGZvciBzcnYtYSAgISE="
 tunnel-ip  = "10.91.0.7"
 endpoints  = ["10.0.5.7:51820"]
 services   = [{ app = "billing", port = 8080 }]
 
 [[peer]]
 peer-id    = "srv-report-02"
-public-key = "QW5vdGhlciBrZXkgZ29lcyByaWdodCBoZXJlLg"
+public-key = "ZXhhbXBsZSBwdWJsaWMga2V5IGZvciBzcnYtYiAgISE="
 tunnel-ip  = "10.91.0.9"
 endpoints  = ["10.0.5.9:51820", "10.0.9.9:51820"]
 services   = [{ app = "report", port = 8080 }]

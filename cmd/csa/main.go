@@ -340,13 +340,33 @@ func reload(dir string, live *atomic.Pointer[config.Config], dev *wgdev.Device,
 // 것이면 운영자는 그것이 걸리지 않았다고 여긴다.
 func back(old *config.Config, dev *wgdev.Device, dnsSrv *name.Server, gd *guard.Guard,
 	cause error, logf func(string, ...any)) error {
-	table, terr := name.NewTable(old)
-	if terr == nil {
-		dnsSrv.SetTable(table)
+	return rollback(cause, logf,
+		func() error {
+			table, err := name.NewTable(old)
+			if err != nil {
+				return err
+			}
+			dnsSrv.SetTable(table)
+			return nil
+		},
+		func() error { return dev.Reload(old) },
+		func() error { return gd.Apply(guardConfig(old)) },
+	)
+}
+
+// rollback은 되돌리는 걸음을 모두 밟고 하나라도 실패했는지 알린다.
+//
+// 하나가 실패해도 나머지를 멈추지 않는다. 되돌릴 수 있는 것은 되돌려야 반쯤
+// 걸린 자리가 좁아진다.
+func rollback(cause error, logf func(string, ...any), steps ...func() error) error {
+	failed := false
+	for _, step := range steps {
+		if err := step(); err != nil {
+			failed = true
+			logf("되돌리는 중에 실패했습니다: %v", err)
+		}
 	}
-	rerr := dev.Reload(old)
-	gerr := gd.Apply(guardConfig(old))
-	if terr == nil && rerr == nil && gerr == nil {
+	if !failed {
 		logf("설정을 걸지 못해 앞서 걸려 있던 것으로 되돌렸습니다.")
 		return fmt.Errorf("%w. 앞서 걸려 있던 설정으로 되돌렸다", cause)
 	}

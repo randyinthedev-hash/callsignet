@@ -8,8 +8,9 @@ on:
   push:
     tags: ["v*"]
 
+# 권한은 릴리스를 만드는 작업에만 준다. 시험을 돌리는 작업은 읽기만 하면 된다.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # 태그가 시험을 지난 커밋을 가리킨다는 보장은 태그 자체에 없다. 그래서
@@ -37,6 +38,8 @@ jobs:
     name: 릴리스를 만든다
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

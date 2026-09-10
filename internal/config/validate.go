@@ -61,6 +61,9 @@ func (c *Config) checkSelf() []string {
 	if s.ListenPort == 53 {
 		p = append(p, "listen-port를 53으로 둘 수 없다. csa가 그 포트에서 이름 해석을 받는다")
 	}
+	if msg := checkIface(s.TunName()); msg != "" {
+		p = append(p, msg)
+	}
 	if s.Tun.MTU != 0 && (s.Tun.MTU < 1280 || s.Tun.MTU > 1500) {
 		p = append(p, fmt.Sprintf("tun.mtu가 범위를 벗어났다: %d", s.Tun.MTU))
 	}
@@ -114,6 +117,29 @@ func checkGuard(g Guard) []string {
 // publicKey는 적어 둔 공개키를 읽어 다듬은 모양으로 돌려준다. csa가 wg에 설정을
 // 넣을 때 같은 것을 하는데, 그때 실패하면 이미 기동한 뒤라 운영자가 까닭을 찾기
 // 어렵다. 그래서 설정 검사에서 먼저 본다.
+// checkIface는 리눅스가 받아들이는 인터페이스 이름인지 본다.
+//
+// 커널이 이름을 15글자까지 받고 슬래시와 공백을 받지 않는다. 넘거나 어긋나면
+// csa가 인터페이스를 만들지 못해 기동에서 실패한다. 설정 검사에서 먼저 잡는다.
+func checkIface(v string) string {
+	if v == "" {
+		return "tun.name이 비어 있다"
+	}
+	if len(v) > 15 {
+		return "tun.name이 15글자를 넘는다: " + v
+	}
+	if v == "." || v == ".." {
+		return "tun.name으로 쓸 수 없다: " + v
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c == '/' || c == ':' || c <= ' ' || c == 0x7f {
+			return "tun.name에 쓸 수 없는 글자가 있다: " + v
+		}
+	}
+	return ""
+}
+
 // checkLabel은 DNS 이름의 한 조각으로 쓸 수 있는지 본다.
 //
 // peer-id와 app은 이름 해석기의 표에 들어가고, 표는 이름을 소문자로 바꾼다.
@@ -163,6 +189,17 @@ func publicKey(b64 string) (string, error) {
 	}
 	if len(raw) != 32 {
 		return "", fmt.Errorf("길이가 32바이트가 아니다: %d", len(raw))
+	}
+	// 전부 0인 값은 X25519의 공개키가 아니다. 그것으로는 세션이 서지 않는다.
+	zero := true
+	for _, b := range raw {
+		if b != 0 {
+			zero = false
+			break
+		}
+	}
+	if zero {
+		return "", fmt.Errorf("전부 0이다. 공개키가 아니다")
 	}
 	return base64.StdEncoding.EncodeToString(raw), nil
 }
@@ -224,8 +261,13 @@ func (c *Config) checkPeers() []string {
 		}
 
 		for _, ep := range peer.Endpoints {
-			if _, err := netip.ParseAddrPort(ep); err != nil {
+			ap, err := netip.ParseAddrPort(ep)
+			switch {
+			case err != nil:
 				p = append(p, fmt.Sprintf("endpoint를 읽을 수 없다: %s의 %s", peer.PeerID, ep))
+			case ap.Port() == 0:
+				// 0번 포트로는 붙을 수 없다. wg가 그 주소로 handshake를 걸지 못한다.
+				p = append(p, fmt.Sprintf("endpoint의 포트가 0이다: %s의 %s", peer.PeerID, ep))
 			}
 		}
 		seenApp := map[string]bool{}
