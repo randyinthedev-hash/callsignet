@@ -78,15 +78,23 @@ func main() {
 // 이미 있는 파일에 os.WriteFile로 쓰면 그 파일의 권한은 그대로 남는다. 0644인
 // 파일에 개인키를 쓰고도 「소유자만 읽을 수 있습니다」라고 찍는 일이 생긴다.
 // O_EXCL로 만들면 그런 일이 없고, 쓰던 신원 키를 조용히 덮어쓰는 일도 없다.
-func writeSecret(path, body string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+func writeSecret(path, body string, force bool) error {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	f, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
 		if os.IsExist(err) {
-			return fmt.Errorf("그 자리에 파일이 이미 있다. 덮어쓰지 않는다: %s", path)
+			return fmt.Errorf("그 자리에 파일이 이미 있다. 덮어쓰려면 -f를 주라: %s", path)
 		}
 		return err
 	}
 	defer f.Close()
+	// 이미 있던 파일은 만들 때의 권한을 그대로 들고 있다. 덮어쓸 때 바로잡는다.
+	if err := f.Chmod(0o600); err != nil {
+		return err
+	}
 	if _, err := f.WriteString(body); err != nil {
 		return err
 	}
@@ -426,6 +434,7 @@ func countServices(c *config.Config) int {
 func runGenpsk(args []string) error {
 	fs := flag.NewFlagSet("genpsk", flag.ExitOnError)
 	out := fs.String("o", "", "키를 쓸 파일. 비우면 화면에 찍는다")
+	force := fs.Bool("f", false, "그 자리에 파일이 있어도 덮어쓴다")
 	fs.Parse(args)
 
 	raw := make([]byte, 32)
@@ -437,7 +446,7 @@ func runGenpsk(args []string) error {
 		fmt.Println(key)
 		return nil
 	}
-	if err := writeSecret(*out, key+"\n"); err != nil {
+	if err := writeSecret(*out, key+"\n", *force); err != nil {
 		return err
 	}
 	fmt.Printf("사전 공유키를 %s에 썼습니다. 소유자만 읽을 수 있습니다.\n", *out)
@@ -448,6 +457,7 @@ func runGenpsk(args []string) error {
 func runGenkey(args []string) error {
 	fs := flag.NewFlagSet("genkey", flag.ExitOnError)
 	out := fs.String("o", "", "개인키를 쓸 파일. 비우면 화면에 찍는다")
+	force := fs.Bool("f", false, "그 자리에 파일이 있어도 덮어쓴다")
 	fs.Parse(args)
 
 	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
@@ -471,7 +481,7 @@ func runGenkey(args []string) error {
 		fmt.Fprintln(os.Stderr, "공개키:", pubB64)
 		return nil
 	}
-	if err := writeSecret(*out, privB64+"\n"); err != nil {
+	if err := writeSecret(*out, privB64+"\n", *force); err != nil {
 		return err
 	}
 	fmt.Printf("개인키를 %s에 썼습니다. 소유자만 읽을 수 있습니다.\n", *out)

@@ -907,7 +907,7 @@ serve(9999)
     # 바꾸어 세션이 서지 않는 것을 본다. 키가 실제로 handshake에 섞이지 않으면
     # 달라도 세션이 서므로, 이 검사가 없으면 위의 통과가 아무것도 증명하지 못한다.
     PSK_OK=1
-    "$CSA" genpsk -o "$WORK/b/psk/srv-a.key" >/dev/null
+    "$CSA" genpsk -f -o "$WORK/b/psk/srv-a.key" >/dev/null
     ip netns exec "$NS_A" env CSA_DEBUG= "$CSA" run -c "$WORK/a" > "$WORK/a/csa3.log" 2>&1 & PID_A3=$!
     ip netns exec "$NS_B" env CSA_DEBUG= "$CSA" run -c "$WORK/b" > "$WORK/b/csa3.log" 2>&1 & PID_B3=$!
     sleep 3
