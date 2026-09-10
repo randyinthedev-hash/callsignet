@@ -1,0 +1,49 @@
+# 태그를 밀면 릴리스를 만들고 csa를 붙인다.
+#
+# 붙이는 것은 정적으로 링크한 리눅스 바이너리다. Rocky는 Ubuntu보다 glibc가
+# 낮아 동적으로 링크한 것이 돌지 않는다.
+name: 릴리스
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 릴리스를 만든다
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # 태그와 csa가 찍는 판이 다르면 쓰는 쪽이 어느 것을 받았는지 알 수 없다.
+      - name: 태그와 csa의 판이 같은지 본다
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          got="$(go run ./cmd/csa version)"
+          if [ "$tag" != "$got" ]; then
+            echo "태그와 csa의 판이 다릅니다. 태그 $tag, csa $got" >&2
+            exit 1
+          fi
+
+      - name: csa를 만든다
+        run: |
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
+              go build -trimpath -ldflags "-s -w" -o "csa-linux-$arch" ./cmd/csa
+          done
+          sha256sum csa-linux-* > sha256sum.txt
+
+      - name: 릴리스를 만든다
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "무엇을 만들었는지는 [릴리스 노트](RELEASE_NOTES.md)에 있습니다. 붙인 것은 정적으로 링크한 리눅스 바이너리입니다." \
+            csa-linux-amd64 csa-linux-arm64 sha256sum.txt

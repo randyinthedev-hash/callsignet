@@ -10,6 +10,10 @@ csa는 운영자가 적은 로컬 설정 파일로 움직인다. 머신마다 �
 
 [Apache License 2.0](LICENSE)이다.
 
+## 받기
+
+발행한 판은 [릴리스](https://github.com/randyinthedev-hash/callsignet/releases)에 있다. 정적으로 링크한 리눅스 바이너리를 붙여 둔다. 버전마다 무엇을 만들었는지는 [RELEASE_NOTES.md](RELEASE_NOTES.md)에 있다.
+
 ## 함께 만들기
 
 고치거나 늘리려면 [CONTRIBUTING.md](CONTRIBUTING.md)를 본다. 취약점을 찾았으면 공개 이슈로 올리지 않고 [SECURITY.md](SECURITY.md)의 경로로 알린다. 이 리포는 [행동 강령](CODE_OF_CONDUCT.md)을 따른다.
