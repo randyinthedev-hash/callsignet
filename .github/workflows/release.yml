@@ -59,13 +59,24 @@ jobs:
             exit 1
           fi
 
+      # -w는 디버그 정보를 지운다. -s는 쓰지 않는다. -s가 심볼 표를 지우면
+      # govulncheck가 바이너리에서 어느 함수를 부르는지 보지 못한다. 그때
+      # govulncheck는 모듈 단위로만 보아, csa가 부르지도 않는 취약점을 알린다.
+      # 받는 사람이 붙인 바이너리를 스스로 재는 길을 막지 않는다.
       - name: csa를 만든다
         run: |
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
-              go build -trimpath -ldflags "-s -w" -o "csa-linux-$arch" ./cmd/csa
+              go build -trimpath -ldflags "-w" -o "csa-linux-$arch" ./cmd/csa
           done
           sha256sum csa-linux-* > sha256sum.txt
+
+      # 소스를 잰 것과 붙이는 것이 같다는 보장은 없다. 붙일 바이너리를 그대로 잰다.
+      - name: 붙일 바이너리를 잰다
+        run: |
+          for arch in amd64 arm64; do
+            go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode=binary "./csa-linux-$arch"
+          done
 
       - name: 릴리스를 만든다
         env:

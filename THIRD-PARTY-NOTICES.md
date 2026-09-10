@@ -10,9 +10,9 @@ csa 바이너리 안에 아래 라이브러리가 함께 들어간다. 각 라�
 | `github.com/miekg/dns` | v1.1.62 | BSD 3-Clause |
 | `github.com/vishvananda/netlink` | v1.3.1 | Apache License 2.0 |
 | `github.com/vishvananda/netns` | v0.0.5 | Apache License 2.0 |
-| `golang.org/x/crypto` | v0.37.0 | BSD 3-Clause |
-| `golang.org/x/net` | v0.39.0 | BSD 3-Clause |
-| `golang.org/x/sys` | v0.32.0 | BSD 3-Clause |
+| `golang.org/x/crypto` | v0.57.0 | BSD 3-Clause |
+| `golang.org/x/net` | v0.59.0 | BSD 3-Clause |
+| `golang.org/x/sys` | v0.48.0 | BSD 3-Clause |
 | `golang.zx2c4.com/wireguard` | v0.0.0-20260522210424-ecfc5a8d5446 | MIT |
 
 
@@ -472,7 +472,7 @@ Apache License
 ```
 
 
-## golang.org/x/crypto v0.37.0
+## golang.org/x/crypto v0.57.0
 
 ```
 Copyright 2009 The Go Authors.
@@ -505,7 +505,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 
-## golang.org/x/net v0.39.0
+## golang.org/x/net v0.59.0
 
 ```
 Copyright 2009 The Go Authors.
@@ -538,7 +538,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 
-## golang.org/x/sys v0.32.0
+## golang.org/x/sys v0.48.0
 
 ```
 Copyright 2009 The Go Authors.
