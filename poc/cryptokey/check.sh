@@ -9,6 +9,7 @@ need_root "$@"
 
 ip netns list | grep -q "$NS_CLI" || { echo "먼저 setup.sh 를 돌리세요." >&2; exit 1; }
 mkdir -p "$RESULTS"
+own "$RESULTS"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
 REPORT="$RESULTS/cryptokey-$TS.md"
 
@@ -44,6 +45,8 @@ PASS=0
     echo "예상과 다르다. wg 설정을 확인한다."
   fi
 } > "$REPORT"
+
+own "$REPORT"
 
 echo
 cat "$REPORT"
