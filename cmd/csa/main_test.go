@@ -31,7 +31,8 @@ func TestWriteSecret이미있으면만들지않는다(t *testing.T) {
 
 // TestWriteSecret덮어쓸때권한을바로잡는다는 os.WriteFile이 이미 있는 파일의
 // 권한을 바꾸지 않기 때문이다. 0644인 파일에 개인키를 쓰고도 소유자만 읽을 수
-// 있다고 찍는 일이 있었다.
+// 있다고 찍는 일이 있었다. 옆에 새로 써서 옮기므로 옛 파일의 권한이 따라오지
+// 않는다.
 func TestWriteSecret덮어쓸때권한을바로잡는다(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "psk.key")
 	if err := os.WriteFile(path, []byte("남이 만든 파일\n"), 0o644); err != nil {
@@ -50,6 +51,27 @@ func TestWriteSecret덮어쓸때권한을바로잡는다(t *testing.T) {
 	b, _ := os.ReadFile(path)
 	if string(b) != "새 키\n" {
 		t.Fatalf("덮어쓴 내용이 다르다: %s", b)
+	}
+}
+
+// TestWriteSecret바꾸다실패해도쓰던키를잃지않는다는 있던 파일을 먼저 비우지
+// 않기 때문이다. 옆에 온전히 써 두고 한 번에 옮긴다.
+func TestWriteSecret바꾸다실패해도쓰던키를잃지않는다(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "psk.key")
+	if err := writeSecret(path, "쓰던 키\n", false); err != nil {
+		t.Fatal(err)
+	}
+	// 옆에 쓸 자리를 디렉터리로 막아 두면 바꾸기가 실패한다.
+	if err := os.Mkdir(path+".new", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSecret(path, "새 키\n", true); err == nil {
+		t.Fatal("바꾸지 못했는데 성공이라고 했다")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil || string(b) != "쓰던 키\n" {
+		t.Fatalf("쓰던 키를 잃었다: %v %q", err, b)
 	}
 }
 
@@ -84,6 +106,9 @@ func TestRollback(t *testing.T) {
 		if !strings.Contains(err.Error(), "되돌렸다") {
 			t.Fatalf("되돌렸다고 알리지 않는다: %v", err)
 		}
+		if errors.Is(err, errMixed) {
+			t.Fatal("되돌렸는데 멈추라는 표지를 달았다")
+		}
 		if n != 3 {
 			t.Fatalf("걸음을 다 밟지 않았다: %d", n)
 		}
@@ -96,6 +121,11 @@ func TestRollback(t *testing.T) {
 		err := rollback(cause, quiet, bad, ok, ok)
 		if !strings.Contains(err.Error(), "반쯤 걸린 상태") {
 			t.Fatalf("반쯤 걸렸다고 알리지 않는다: %v", err)
+		}
+		// 알리는 것만으로는 모자란다. 부른 쪽이 이것을 보고 csa를 멈춘다.
+		// 어느 판이 걸려 있는지 알 수 없는 채로 계속 돌면 안 되기 때문이다.
+		if !errors.Is(err, errMixed) {
+			t.Fatalf("멈추라는 표지를 달지 않았다: %v", err)
 		}
 		// 하나가 실패해도 나머지는 밟아야 반쯤 걸린 자리가 좁아진다.
 		if n != 3 {

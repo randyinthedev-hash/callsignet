@@ -129,18 +129,39 @@ type Config struct {
 // Load는 디렉터리에서 세 파일을 읽는다. 검사하지는 않는다.
 func Load(dir string) (*Config, error) {
 	var c Config
-	if _, err := toml.DecodeFile(filepath.Join(dir, "csa.toml"), &c.Self); err != nil {
-		return nil, fmt.Errorf("csa.toml을 읽지 못했다: %w", err)
+	if err := decode(filepath.Join(dir, "csa.toml"), &c.Self); err != nil {
+		return nil, err
 	}
 	var pf peersFile
-	if _, err := toml.DecodeFile(filepath.Join(dir, "peers.toml"), &pf); err != nil {
-		return nil, fmt.Errorf("peers.toml을 읽지 못했다: %w", err)
+	if err := decode(filepath.Join(dir, "peers.toml"), &pf); err != nil {
+		return nil, err
 	}
 	c.Peers = pf.Peer
-	if _, err := toml.DecodeFile(filepath.Join(dir, "policy.toml"), &c.Policy); err != nil {
-		return nil, fmt.Errorf("policy.toml을 읽지 못했다: %w", err)
+	if err := decode(filepath.Join(dir, "policy.toml"), &c.Policy); err != nil {
+		return nil, err
 	}
 	return &c, nil
+}
+
+// decode는 파일 하나를 읽고 모르는 열쇠가 있으면 거절한다.
+//
+// 모르는 열쇠를 조용히 버리면 보안 설정이 소리 없이 뒤로 물러난다. `[psk]`의
+// `mode`를 `modee`로 잘못 적으면 mode가 빈 값이 되고, 빈 값은 optional과 같다.
+// 운영자는 사전 공유키를 반드시 쓰게 했다고 여기는데 csa는 키 없이 기동한다.
+func decode(path string, v any) error {
+	md, err := toml.DecodeFile(path, v)
+	if err != nil {
+		return fmt.Errorf("%s을 읽지 못했다: %w", filepath.Base(path), err)
+	}
+	if left := md.Undecoded(); len(left) > 0 {
+		names := make([]string, 0, len(left))
+		for _, k := range left {
+			names = append(names, k.String())
+		}
+		return fmt.Errorf("%s에 모르는 열쇠가 있다. 오타인지 보라: %s",
+			filepath.Base(path), strings.Join(names, ", "))
+	}
+	return nil
 }
 
 // PSKPath는 그 상대와 쓰는 사전 공유키 파일의 자리다. 디렉터리를 적지 않았으면

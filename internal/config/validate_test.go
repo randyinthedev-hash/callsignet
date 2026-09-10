@@ -98,6 +98,12 @@ func TestValidate(t *testing.T) {
 		{"tun.name에 슬래시가 있다", func(c *Config) { c.Self.Tun.Name = "cs/0" }, "쓸 수 없는 글자"},
 		{"endpoint의 포트가 0이다", func(c *Config) { c.Peers[1].Endpoints = []string{"10.0.5.2:0"} }, "포트가 0"},
 		{"공개키가 전부 0이다", func(c *Config) { c.Peers[1].PublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }, "전부 0"},
+		{"개인키를 다른 사용자가 읽을 수 있다", func(c *Config) {
+			if err := os.Chmod(c.Self.PrivateKey, 0o644); err != nil {
+				panic(err)
+			}
+		}, "다른 사용자가 읽을 수 있다"},
+		{"개인키 자리가 디렉터리다", func(c *Config) { c.Self.PrivateKey = filepath.Dir(c.Self.PrivateKey) }, "일반 파일이 아니다"},
 		{"peer-id가 두 번 나온다", func(c *Config) { c.Peers[1].PeerID = "srv-a" }, "두 번 나온다"},
 		{"개인키 파일이 없다", func(c *Config) { c.Self.PrivateKey = "/없는/경로" }, "개인키 파일"},
 		{"접속 주소를 읽을 수 없다", func(c *Config) { c.Peers[1].Endpoints = []string{"바보"} }, "endpoint"},
@@ -146,6 +152,39 @@ func TestValidate(t *testing.T) {
 				}
 			}
 			t.Fatalf("%q를 담은 문제를 찾지 못했다. 나온 것: %v", tc.want, got)
+		})
+	}
+}
+
+// TestLoad모르는열쇠를거절한다는 오타가 보안 설정을 조용히 뒤로 물리기
+// 때문이다. [psk]의 mode를 modee로 잘못 적으면 mode가 빈 값이 되고, 빈 값은
+// optional과 같다. 운영자는 키를 반드시 쓰게 했다고 여기는데 csa는 키 없이
+// 기동한다.
+func TestLoad모르는열쇠를거절한다(t *testing.T) {
+	cases := []struct {
+		name  string
+		files map[string]string
+	}{
+		{"csa.toml의 오타", map[string]string{"csa.toml": "peer-id = \"srv-a\"\n\n[psk]\nmodee = \"required\"\n"}},
+		{"peers.toml의 오타", map[string]string{"peers.toml": "[[peer]]\npeer-id = \"srv-a\"\npublik-key = \"x\"\n"}},
+		{"policy.toml의 오타", map[string]string{"policy.toml": "outbond = [\"srv-b/api\"]\n"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, n := range []string{"csa.toml", "peers.toml", "policy.toml"} {
+				body := c.files[n]
+				if err := os.WriteFile(filepath.Join(dir, n), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := Load(dir)
+			if err == nil {
+				t.Fatal("모르는 열쇠가 있는 설정을 받아들였다")
+			}
+			if !strings.Contains(err.Error(), "모르는 열쇠") {
+				t.Fatalf("무엇이 잘못인지 알리지 않는다: %v", err)
+			}
 		})
 	}
 }

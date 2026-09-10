@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -79,26 +80,43 @@ func main() {
 // 파일에 개인키를 쓰고도 「소유자만 읽을 수 있습니다」라고 찍는 일이 생긴다.
 // O_EXCL로 만들면 그런 일이 없고, 쓰던 신원 키를 조용히 덮어쓰는 일도 없다.
 func writeSecret(path, body string, force bool) error {
-	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
-	if force {
-		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	}
-	f, err := os.OpenFile(path, flags, 0o600)
-	if err != nil {
-		if os.IsExist(err) {
-			return fmt.Errorf("그 자리에 파일이 이미 있다. 덮어쓰려면 -f를 주라: %s", path)
+	if !force {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			if os.IsExist(err) {
+				return fmt.Errorf("그 자리에 파일이 이미 있다. 덮어쓰려면 -f를 주라: %s", path)
+			}
+			return err
 		}
-		return err
+		defer f.Close()
+		if _, err := f.WriteString(body); err != nil {
+			return err
+		}
+		return f.Close()
 	}
-	defer f.Close()
-	// 이미 있던 파일은 만들 때의 권한을 그대로 들고 있다. 덮어쓸 때 바로잡는다.
-	if err := f.Chmod(0o600); err != nil {
+
+	// 바꿀 때는 옆에 온전히 써 두고 한 번에 옮긴다. 있던 파일을 먼저 비우면
+	// 쓰다가 실패했을 때 쓰던 정상 키를 잃는다.
+	tmp := path + ".new"
+	os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
 		return err
 	}
 	if _, err := f.WriteString(body); err != nil {
+		f.Close()
+		os.Remove(tmp)
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func runCheck(args []string) error {
@@ -186,13 +204,25 @@ func runRun(args []string) error {
 	var live atomic.Pointer[config.Config]
 	live.Store(cfg)
 
+	// mixed는 설정을 걸다 실패하고 되돌리지도 못했을 때 신호가 온다.
+	mixed := make(chan struct{}, 1)
+
 	started := time.Now()
 	ctl, err := control.Listen(cfg.Self.PeerID, func(req string) (string, error) {
 		switch req {
 		case "status":
 			return statusJSON(live.Load(), dev, took, gd, started)
 		case "reload":
-			return reload(*dir, &live, dev, dnsSrv, gd, logf)
+			out, err := reload(*dir, &live, dev, dnsSrv, gd, logf)
+			if errors.Is(err, errMixed) {
+				// 부른 쪽이 까닭을 받아 볼 틈을 두고 신호를 보낸다. 먼저
+				// 멈추면 무엇이 잘못됐는지 알리지 못한 채 연결이 끊긴다.
+				go func() {
+					time.Sleep(300 * time.Millisecond)
+					mixed <- struct{}{}
+				}()
+			}
+			return out, err
 		}
 		return "", fmt.Errorf("모르는 물음이다: %s", req)
 	})
@@ -205,9 +235,22 @@ func runRun(args []string) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	logf("csa가 돕니다. 멈추려면 Ctrl-C를 누르십시오.")
-	<-stop
-	logf("멈춥니다.")
-	return nil
+	select {
+	case <-stop:
+		logf("멈춥니다.")
+		return nil
+	case <-mixed:
+		// 어느 판이 걸려 있는지 알 수 없으므로 계속 돌면 안 된다. 새 정책이
+		// 권한을 넓히는 것이었다면 그것이 걸린 채로 도는 셈이다. 터널을 닫아
+		// 아무것도 오가지 못하게 한다.
+		//
+		// 직통 경로 규칙은 남긴다. 지우면 이 머신의 서비스 포트가 터널 밖으로
+		// 다시 열린다. 멈추는 까닭이 안전인데 멈추면서 여는 것은 앞뒤가 맞지
+		// 않는다.
+		gd.Keep()
+		logf("반쯤 걸린 상태라 멈춥니다. csa를 다시 띄우십시오.")
+		return errMixed
+	}
 }
 
 // statusJSON은 지금 상태를 모아 JSON으로 만든다. 설정에서 오는 값과 wg에
@@ -332,6 +375,10 @@ func reload(dir string, live *atomic.Pointer[config.Config], dev *wgdev.Device,
 	return report, nil
 }
 
+// errMixed는 설정을 걸다 실패하고 되돌리지도 못했을 때다. 이 머신이 어느 판을
+// 따르는지 알 수 없다는 뜻이다.
+var errMixed = errors.New("이 머신은 반쯤 걸린 상태다")
+
 // back은 설정을 걸다 실패했을 때 앞서 걸려 있던 것으로 되돌린다.
 //
 // 설정을 거는 일은 세 걸음이다. wg의 상대와 정책을 바꾸고, 이름 표를 바꾸고,
@@ -370,8 +417,8 @@ func rollback(cause error, logf func(string, ...any), steps ...func() error) err
 		logf("설정을 걸지 못해 앞서 걸려 있던 것으로 되돌렸습니다.")
 		return fmt.Errorf("%w. 앞서 걸려 있던 설정으로 되돌렸다", cause)
 	}
-	logf("설정을 걸지 못했고 되돌리지도 못했습니다. 이 머신은 반쯤 걸린 상태입니다.")
-	return fmt.Errorf("%w. 되돌리지도 못했다. 이 머신은 반쯤 걸린 상태다. csa를 다시 띄우라", cause)
+	logf("설정을 걸지 못했고 되돌리지도 못했습니다.")
+	return fmt.Errorf("%w. 되돌리지도 못했다. %w", cause, errMixed)
 }
 
 func reloadReport(c config.Changes) string {

@@ -145,6 +145,7 @@ type Guard struct {
 	mode Mode
 	on   bool
 	nft  string // nft 명령의 자리
+	keep bool   // 멈출 때 규칙을 남길지
 	logf func(string, ...any)
 }
 
@@ -257,8 +258,19 @@ func (g *Guard) tell(c Config) {
 }
 
 // Close는 걸어 둔 표를 지운다. 조직의 다른 규칙은 건드리지 않는다.
+// Keep은 멈출 때 규칙을 지우지 말라고 이른다.
+//
+// csa가 반쯤 걸린 상태로 멈출 때 쓴다. 그때 규칙까지 지우면 이 머신의 서비스
+// 포트가 터널 밖으로 다시 열린다. 규칙을 남겨 두면 다시 띄울 때까지 닫힌 채로
+// 있다.
+func (g *Guard) Keep() { g.keep = true }
+
 func (g *Guard) Close() {
 	if g == nil || !g.on {
+		return
+	}
+	if g.keep {
+		g.logf("직통 경로 규칙을 남겨 둡니다. 이 머신의 서비스 포트는 닫힌 채로 있습니다.")
 		return
 	}
 	out, err := exec.Command(g.nft, "delete", "table", "inet", tableName).CombinedOutput()

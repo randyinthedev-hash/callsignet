@@ -36,8 +36,8 @@ func (c *Config) checkSelf() []string {
 	}
 	if s.PrivateKey == "" {
 		p = append(p, "csa.toml에 private-key가 없다")
-	} else if _, err := os.Stat(s.PrivateKey); err != nil {
-		p = append(p, fmt.Sprintf("개인키 파일을 열 수 없다: %s", s.PrivateKey))
+	} else if msg := checkSecretFile("개인키", s.PrivateKey); msg != "" {
+		p = append(p, msg)
 	}
 	if s.ListenPort <= 0 || s.ListenPort > 65535 {
 		p = append(p, fmt.Sprintf("listen-port가 범위를 벗어났다: %d", s.ListenPort))
@@ -117,6 +117,32 @@ func checkGuard(g Guard) []string {
 // publicKey는 적어 둔 공개키를 읽어 다듬은 모양으로 돌려준다. csa가 wg에 설정을
 // 넣을 때 같은 것을 하는데, 그때 실패하면 이미 기동한 뒤라 운영자가 까닭을 찾기
 // 어렵다. 그래서 설정 검사에서 먼저 본다.
+// checkSecretFile은 비밀을 담은 파일이 안전한 자리에 있는지 본다.
+//
+// 있는지만 보아서는 모자란다. 디렉터리도 Stat을 지나고, 읽을 수 없는 파일도
+// 지난다. 무엇보다 0644인 개인키가 그대로 지나면 다른 사용자가 그 머신의
+// 신원을 가져갈 수 있다. csa가 만든 파일은 0600이지만 운영자가 다른 곳에서
+// 옮겨 온 파일은 그렇지 않다.
+func checkSecretFile(kind, path string) string {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Sprintf("%s 파일을 열 수 없다: %s", kind, path)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Sprintf("%s 자리가 일반 파일이 아니다: %s", kind, path)
+	}
+	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+		return fmt.Sprintf("%s 파일을 다른 사용자가 읽을 수 있다. 0600으로 두라: %s (지금 %o)",
+			kind, path, perm)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Sprintf("%s 파일을 읽을 수 없다: %s", kind, path)
+	}
+	f.Close()
+	return ""
+}
+
 // checkIface는 리눅스가 받아들이는 인터페이스 이름인지 본다.
 //
 // 커널이 이름을 15글자까지 받고 슬래시와 공백을 받지 않는다. 넘거나 어긋나면
@@ -416,8 +442,15 @@ func (c *Config) checkPSK() []string {
 			p = append(p, err.Error())
 			continue
 		}
-		if !ok && c.Self.PSK.Mode == "required" {
-			p = append(p, fmt.Sprintf("psk.mode가 required인데 사전 공유키가 없다: %s", c.PSKPath(peer.PeerID)))
+		if !ok {
+			if c.Self.PSK.Mode == "required" {
+				p = append(p, fmt.Sprintf("psk.mode가 required인데 사전 공유키가 없다: %s", c.PSKPath(peer.PeerID)))
+			}
+			continue
+		}
+		// 개인키와 같은 이유로 이 파일도 다른 사용자가 읽을 수 없어야 한다.
+		if msg := checkSecretFile("사전 공유키", c.PSKPath(peer.PeerID)); msg != "" {
+			p = append(p, msg)
 		}
 	}
 	return p
