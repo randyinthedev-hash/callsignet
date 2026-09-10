@@ -22,7 +22,7 @@ type Takeover struct {
 
 // Apply는 내부 도메인 질의가 csa에 오도록 시스템 설정을 건다.
 //
-// 관리 주체를 판별해 거기에 맞춰 건다. systemd-resolved가 관리하면 인터페이스에
+// 이름 해석 자리를 무엇이 쥐고 있는지 가려 거기에 맞춰 건다. systemd-resolved가 관리하면 인터페이스에
 // 도메인을 등록하고, 아무도 관리하지 않으면 /etc/resolv.conf를 직접 고친다.
 // tunnelIP는 systemd-resolved에 등록할 주소다. resolved는 루프백 주소를
 // 받아 주지 않으므로 터널 인터페이스에 붙은 주소를 쓴다. csa는 그 주소에서도
@@ -63,7 +63,7 @@ func Apply(iface, listenAddr, tunnelIP, domain, revZone string, logf func(string
 			return nil, err
 		}
 	}
-	logf("이름 해석 설정을 걸었습니다. 관리 주체는 %s입니다.", t.Manager)
+	logf("이름 해석 설정을 걸었습니다. 자리를 차지한 방법: %s", t.Manager)
 	return t, nil
 }
 

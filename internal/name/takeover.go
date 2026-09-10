@@ -31,7 +31,7 @@ func (m Manager) String() string {
 // ResolvedStub은 systemd-resolved가 질의를 받는 주소다.
 const ResolvedStub = "127.0.0.53"
 
-// Detect는 관리 주체를 가린다.
+// Detect는 이름 해석 자리를 무엇이 쥐고 있는지 가린다.
 //
 // 파일 내용을 먼저 본다. 앱이 실제로 어디에 묻는지가 거기 적혀 있기 때문이다.
 // 심볼릭 링크가 어디를 가리키는지는 그다음에 본다. 링크만 보면 속을 수 있다.

@@ -318,11 +318,11 @@ try_a() { $SSH "root@$IP_A" "$1" >/dev/null 2>&1; }
 
 echo
 echo "== A(Ubuntu) 리졸버 갈래"
-if on_a 'grep -q "관리 주체는 systemd-resolved입니다" /var/log/csa.log && echo yes' | grep -q yes; then
+if on_a 'grep -q "차지한 방법: systemd-resolved" /var/log/csa.log && echo yes' | grep -q yes; then
   say ok "systemd-resolved 갈래를 탄다"
 else
   say 틀림 "systemd-resolved 갈래를 타지 않았다"
-  on_a 'grep -i "관리 주체\|resolvectl\|이름 해석" /var/log/csa.log' | sed 's/^/        /'
+  on_a 'grep -i "차지한 방법\|resolvectl\|이름 해석" /var/log/csa.log' | sed 's/^/        /'
 fi
 if [ -n "$(on_a 'test -L /etc/resolv.conf && echo yes')" ]; then
   say ok "/etc/resolv.conf를 건드리지 않는다"
@@ -336,7 +336,7 @@ else say 틀림 "역방향 구역이 없다"; fi
 
 echo
 echo "== B(Rocky) 리졸버 갈래"
-echo "  csa가 판별한 것: $(on_b 'grep "관리 주체는" /var/log/csa.log | head -1')"
+echo "  csa가 판별한 것: $(on_b 'grep "차지한 방법:" /var/log/csa.log | head -1')"
 if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.53.1"; then
   say ok "자기를 첫 줄에 넣었다"
 else say 틀림 "파일을 가져가지 못했다"; on_b 'head -5 /etc/resolv.conf' | sed 's/^/        /'; fi
