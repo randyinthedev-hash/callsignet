@@ -256,7 +256,20 @@ walk() { # 이름 주소 peer-id 터널IP
     say 틀림 "$name" "일반 사용자가 푼 묶음의 체크섬이 맞고 풀린다"; return
   fi
 
-  # 2. 처음 설치가 중간에 실패하면 만든 것을 치운다. 서비스 파일을 둘 자리를
+  # 2. 손으로 설치한 csa가 있으면 설치하지 않는다. v0.1.3까지는 묶음이 없어
+  #    운영자가 실행 파일을 /usr/local/bin 에 직접 두고 서비스 파일도 직접 썼다.
+  #    그것을 덮어쓰거나 지우면 안 된다. 둘을 심어 두고 설치를 시도한다.
+  $run 'printf "손으로 둔 실행 파일\n" > /usr/local/bin/csa && chmod 755 /usr/local/bin/csa && printf "[Unit]\nDescription=손으로 쓴 서비스 파일\n" > /etc/systemd/system/csa.service && sha256sum /usr/local/bin/csa /etc/systemd/system/csa.service > /root/handmade.sum'
+  if ! $run 'cd /home/inst/a/csa-linux-amd64 && ./install.sh install >/root/install-way.log 2>&1' \
+     && $run 'grep -q "덮어쓰거나 지우지 않습니다" /root/install-way.log && sha256sum -c --quiet /root/handmade.sum && [ ! -e /opt/callsignet ]'; then
+    say ok "$name" "손으로 둔 실행 파일과 서비스 파일이 있으면 아무것도 덮어쓰거나 지우지 않고 거절한다"
+  else
+    say 틀림 "$name" "손으로 둔 실행 파일과 서비스 파일이 있으면 아무것도 덮어쓰거나 지우지 않고 거절한다"
+    $run 'cat /root/install-way.log; sha256sum -c /root/handmade.sum; ls -la /opt/callsignet 2>&1' | sed 's/^/        /'
+  fi
+  $run 'rm -f /usr/local/bin/csa /etc/systemd/system/csa.service'
+
+  # 3. 처음 설치가 중간에 실패하면 만든 것을 치운다. 서비스 파일을 둘 자리를
   #    잠가 두면 링크를 만든 뒤에 실패한다. 치운 뒤에는 다시 install 할 수 있어야
   #    한다.
   $run 'chattr +i /etc/systemd/system'
@@ -269,7 +282,7 @@ walk() { # 이름 주소 peer-id 터널IP
   fi
   $run 'chattr -i /etc/systemd/system'
 
-  # 3. root가 처음 설치한다. 설정이 없으므로 서비스는 켜져 있되 뜨지 않는다.
+  # 4. root가 처음 설치한다. 설정이 없으므로 서비스는 켜져 있되 뜨지 않는다.
   if $run 'cd /home/inst/a/csa-linux-amd64 && ./install.sh install >/root/install.log 2>&1'; then
     say ok "$name" "처음 설치가 끝난다"
   else
@@ -347,6 +360,20 @@ walk() { # 이름 주소 peer-id 터널IP
     say 틀림 "$name" "되돌리면 판이 $VER_A 이 되고 csa가 답한다"
     $run 'cat /root/rollback.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
+
+  # 앞 판과 같은 이름의 판을 두다 실패해도 앞 판이 남는다. 앞 판의 디렉터리를
+  # 잠가 두면 옆으로 밀어 두는 자리에서 실패한다. 지금 판 A, 앞 판 B다.
+  $run "chattr +i /opt/callsignet/versions/$VER_B"
+  if ! $run 'cd /home/inst/b/csa-linux-amd64 && ./install.sh upgrade >/root/prevdup.log 2>&1' \
+     && $run 'grep -q "아무것도 바꾸지 않았습니다" /root/prevdup.log' \
+     && [ "$(cur)" = "$VER_A" ] && [ "$(prev)" = "$VER_B" ] \
+     && $run "[ -x /opt/callsignet/versions/$VER_B/bin/csa ] && [ \"\$(ls -A /opt/callsignet/versions | grep -c '^\\.')\" = 0 ]" && answers; then
+    say ok "$name" "앞 판과 같은 이름의 판을 두다 실패해도 앞 판이 그대로 남는다"
+  else
+    say 틀림 "$name" "앞 판과 같은 이름의 판을 두다 실패해도 앞 판이 그대로 남는다"
+    $run 'cat /root/prevdup.log; ls -la /opt/callsignet/versions' | sed 's/^/        /'
+  fi
+  $run "chattr -i /opt/callsignet/versions/$VER_B"
 
   # 잘못된 판을 만드는 도우미다. 이름과 스크립트 몸통을 받는다.
   fake() { # 이름 몸통

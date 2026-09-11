@@ -70,9 +70,30 @@ sudo ./install.sh install
 4. `/etc/callsignet/`을 0750으로 만든다. 채우지는 않는다.
 5. `csa.service`를 `/etc/systemd/system/`에 놓고 `systemctl enable csa`를 한다.
 
+**이미 있는 것이 있으면 설치하지 않는다.** `/opt/callsignet`이나 `/usr/local/bin/csa`나 `/etc/systemd/system/csa.service`가 있으면 스크립트는 무엇이 있는지 적고 멈춘다. 아무것도 덮어쓰거나 지우지 않는다. 앞서 손으로 설치한 csa라면 아래 「손으로 설치한 csa에서 옮기기」를 따른다.
+
 **스크립트는 서비스를 띄우지 않는다.** 설정이 아직 없기 때문이다. `csa.service`는 `/etc/callsignet/csa.toml`이 없으면 뜨지 않는다.
 
-2번부터 5번 사이에서 실패하면 스크립트는 만든 것을 치우고 멈춘다. 판 디렉터리와 링크 둘과 서비스 파일이다. `/etc/callsignet/`은 둔다. 그래서 까닭을 고치고 다시 `install`을 할 수 있다. 반쯤 설치된 채로 두면 다시 `install`도 `upgrade`도 거절하기 때문이다.
+2번부터 5번 사이에서 실패하면 스크립트는 만든 것을 치우고 멈춘다. 판 디렉터리와 링크 둘과 서비스 파일이다. 우리가 만든 것만 지운다. 링크는 `/opt/callsignet` 아래를 가리킬 때만, 서비스 파일은 이 판의 것과 같을 때만이다. `/etc/callsignet/`은 둔다. 그래서 까닭을 고치고 다시 `install`을 할 수 있다. 반쯤 설치된 채로 두면 다시 `install`도 `upgrade`도 거절하기 때문이다.
+
+## 손으로 설치한 csa에서 옮기기
+
+v0.1.3까지는 설치 묶음이 없었다. 실행 파일을 `/usr/local/bin/csa`에 직접 두고, 서비스 파일을 직접 쓰거나 손으로 띄웠다. 그 머신을 이 절차로 옮긴다. 설정은 `/etc/callsignet/`에 그대로 있으므로 옮길 것이 없다.
+
+```bash
+sudo systemctl stop csa                              # 서비스로 띄웠으면. 손으로 띄웠으면 그 csa를 멈춘다
+sudo mv /usr/local/bin/csa /usr/local/bin/csa.old   # 옛 실행 파일을 둔다. 되돌릴 때 쓴다
+sudo mv /etc/systemd/system/csa.service /root/csa.service.old   # 직접 쓴 서비스 파일이 있으면
+sudo systemctl daemon-reload
+sudo ./install.sh install
+sudo csa check -c /etc/callsignet                   # 새 판의 csa로 지금 설정을 본다
+sudo systemctl start csa
+sudo csa status -c /etc/callsignet
+```
+
+옛 판으로 되돌려야 하면 이 절차를 거꾸로 밟는다. `systemctl stop csa`, 「지우기」 절, 옛 실행 파일과 서비스 파일을 제자리로, `daemon-reload`, 띄우기다. `install.sh rollback`은 쓸 수 없다. 옛 판은 이 스크립트가 둔 판이 아니어서 `previous`가 없다.
+
+옛 실행 파일은 새 판이 자리를 잡은 뒤에 지운다.
 
 이어서 운영자가 한다.
 
@@ -115,7 +136,7 @@ sudo ./install.sh upgrade
 
 스크립트가 하는 일은 이렇다.
 
-1. 새 판을 `/opt/callsignet/versions/<새 판>/`에 둔다. 옆의 임시 자리에 다 만든 뒤 한 번에 옮긴다. 임시 자리의 이름은 점으로 시작해 어떤 판 이름과도 겹치지 않는다. 지금 도는 판은 건드리지 않는다. 같은 판의 디렉터리가 이미 있으면 치우고 다시 둔다. 앞서 걸려 멈춘 시도가 남긴 것이다. 그래서 같은 묶음으로 다시 시도할 수 있다.
+1. 새 판을 `/opt/callsignet/versions/<새 판>/`에 둔다. 옆의 임시 자리에 다 만든 뒤 한 번에 옮긴다. 임시 자리의 이름은 점으로 시작해 어떤 판 이름과도 겹치지 않는다. 지금 도는 판은 건드리지 않는다. 같은 판의 디렉터리가 이미 있으면 새것을 다 만든 뒤에야 있던 것을 옆으로 밀어 두고 새것을 놓는다. 앞서 걸려 멈춘 시도가 남긴 것이거나 앞 판이다. 있던 것을 먼저 지우고 만들다 실패하면 앞 판이 사라지기 때문이다. 그래서 같은 묶음으로 다시 시도할 수 있고, 실패해도 앞 판이 남는다.
 2. **새 판의 csa로 지금 설정을 검사한다.** `versions/<새 판>/bin/csa check -c /etc/callsignet`이다. 설정 파일의 모양이 판마다 달라질 수 있다. 여기서 걸리면 두었던 디렉터리를 치우고 아무것도 바꾸지 않고 멈춘다.
 3. `previous`가 지금 판을, `current`가 새 판을 가리키게 한다. 서비스 파일도 새 판의 것으로 바꾼다.
 4. 서비스가 돌고 있으면 `systemctl restart csa`를 한다.

@@ -80,29 +80,41 @@ active() { systemctl is-active --quiet "$SERVICE"; }
 # 파일의 임자가 그 사용자다. 그것을 그대로 옮기면 root로 도는 실행 파일을 그
 # 사용자가 고칠 수 있다. 다른 사용자가 쓸 수 없게 하는 것도 같은 까닭이다.
 #
-# 같은 판의 디렉터리가 이미 있으면 치우고 다시 둔다. 앞서 사전 검사에 걸려
-# 멈춘 시도가 남긴 것이거나 앞 판이다. 지금 도는 판만은 건드리지 않는다.
-#
 # 옆에 만드는 자리의 이름은 점으로 시작한다. 판 이름은 글자나 숫자로 시작해야
 # 하므로 어떤 판의 디렉터리와도 겹치지 않는다. 판 이름 뒤에 .tmp를 붙여 쓰면
 # 지금 판의 이름이 <새 판>.tmp일 때 지금 판을 지운다.
+#
+# 같은 판의 디렉터리가 이미 있으면 새것을 옆에 다 만든 뒤에야 있던 것을 밀어
+# 두고 새것을 놓는다. 있던 것을 먼저 지우고 만들다 실패하면, 그것이 앞 판일 때
+# 되돌릴 자리가 사라진다. 지금 도는 판만은 건드리지 않는다.
 place() { # 판
   valid_version "$1" || die "판 이름으로 쓸 수 없는 값입니다: '$1'"
-  local dir="$VERSIONS/$1" stage
-  if [ -e "$dir" ]; then
-    if [ "$(readlink -f "$CURRENT" 2>/dev/null || true)" = "$dir" ]; then
-      die "지금 도는 판입니다: $dir"
-    fi
-    rm -rf "$dir"
+  local dir="$VERSIONS/$1" stage old
+  if [ "$(readlink -f "$CURRENT" 2>/dev/null || true)" = "$dir" ]; then
+    die "지금 도는 판입니다: $dir"
   fi
   install -d -m 755 "$ROOT" "$VERSIONS"
   stage=$(mktemp -d "$VERSIONS/.stage.XXXXXX") || die "옆에 만들 자리를 얻지 못했습니다: $VERSIONS"
   if ! { cp -a "$HERE/." "$stage/" && chown -R root:root "$stage" \
          && chmod -R go-w "$stage" && chmod 0755 "$stage/bin/csa"; }; then
     rm -rf "$stage"
-    die "판을 옮기지 못했습니다: $dir"
+    die "판을 옮기지 못했습니다. 아무것도 바꾸지 않았습니다: $dir"
   fi
-  mv -T "$stage" "$dir" || { rm -rf "$stage"; die "판을 제자리에 놓지 못했습니다: $dir"; }
+  if [ -e "$dir" ]; then
+    old=$(mktemp -d "$VERSIONS/.old.XXXXXX") || { rm -rf "$stage"; die "옆에 밀어 둘 자리를 얻지 못했습니다: $VERSIONS"; }
+    if ! mv -T "$dir" "$old"; then
+      rm -rf "$stage" "$old"
+      die "있던 판을 옆으로 밀지 못했습니다. 아무것도 바꾸지 않았습니다: $dir"
+    fi
+    if ! mv -T "$stage" "$dir"; then
+      mv -T "$old" "$dir" || die "새 판을 놓지 못했고 있던 판도 제자리로 돌리지 못했습니다. 있던 판은 $old 에 있습니다. 손으로 되돌리십시오"
+      rm -rf "$stage"
+      die "새 판을 놓지 못했습니다. 있던 판은 그대로입니다: $dir"
+    fi
+    rm -rf "$old"
+  else
+    mv -T "$stage" "$dir" || { rm -rf "$stage"; die "판을 제자리에 놓지 못했습니다: $dir"; }
+  fi
   # SELinux가 있으면 문맥을 이 자리의 기본값으로 되돌린다. cp -a가 묶음을 푼
   # 자리의 문맥을 그대로 가져오는데, 홈 디렉터리에서 풀었으면 그 문맥으로는
   # systemd가 실행 파일을 띄우지 못한다. /opt/*/bin/ 아래는 기본 정책이 bin_t를
@@ -247,18 +259,46 @@ finish_install() { # 판
 # install 해도 「이미 설치되어 있다」로, upgrade 해도 「같은 판이다」로 거절해
 # 스크립트만으로는 다시 시도할 수 없다. 설정 디렉터리는 두고 간다. 운영자가
 # 거기에 무언가를 두었을 수 있다.
+#
+# 우리가 만든 것만 지운다. 실행 파일 링크는 우리 자리를 가리킬 때만, 서비스
+# 파일은 이 판의 것과 같을 때만이다. 설치는 이미 있는 것이 있으면 시작하지
+# 않으므로 여기 오면 모두 우리 것이지만, 그래도 한 번 더 본다.
 undo_install() { # 판
   systemctl disable "$SERVICE" >/dev/null 2>&1 || true
-  rm -f "$UNIT" "$BIN" "$BIN.tmp" "$CURRENT" "$CURRENT.tmp"
+  if [ -L "$BIN" ]; then
+    case "$(readlink "$BIN")" in "$ROOT"/*) rm -f "$BIN" ;; esac
+  fi
+  rm -f "$BIN.tmp"
+  if [ -f "$UNIT" ] && cmp -s "$UNIT" "$VERSIONS/$1/csa.service"; then
+    rm -f "$UNIT"
+  fi
+  rm -f "$CURRENT" "$CURRENT.tmp"
   systemctl daemon-reload >/dev/null 2>&1 || true
   rm -rf "$VERSIONS/$1"
   rmdir "$VERSIONS" "$ROOT" 2>/dev/null || true
 }
 
+# 이미 있는 것을 찾는다. 있으면 그 자리를 적고 0이 아닌 값을 돌려준다.
+#
+# v0.1.3까지는 설치 묶음이 없어 운영자가 실행 파일을 /usr/local/bin 에 직접
+# 두고 서비스 파일도 직접 썼다. 그것을 묻지 않고 덮어쓰거나 실패했을 때 지우면
+# 돌던 것을 잃는다. 옮기는 절차는 INSTALL.md에 있다.
+in_the_way() {
+  local found=0
+  for p in "$ROOT" "$BIN" "$UNIT"; do
+    if [ -e "$p" ] || [ -L "$p" ]; then echo "  $p"; found=1; fi
+  done
+  return $found
+}
+
 do_install() {
   need_root install
   [ -L "$CURRENT" ] && die "이미 설치되어 있습니다. 올리려면 $0 upgrade"
-  local ver
+  local ver way
+  if ! way=$(in_the_way); then
+    die "이미 있는 것이 있습니다. 설치는 아무것도 덮어쓰거나 지우지 않습니다. 앞서 손으로 설치한 csa라면 INSTALL.md의 「손으로 설치한 csa에서 옮기기」를 보십시오:
+$way"
+  fi
   ver=$(bundle_version)
   place "$ver"
   if ! finish_install "$ver"; then
