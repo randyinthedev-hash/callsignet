@@ -256,7 +256,20 @@ walk() { # 이름 주소 peer-id 터널IP
     say 틀림 "$name" "일반 사용자가 푼 묶음의 체크섬이 맞고 풀린다"; return
   fi
 
-  # 2. root가 처음 설치한다. 설정이 없으므로 서비스는 켜져 있되 뜨지 않는다.
+  # 2. 처음 설치가 중간에 실패하면 만든 것을 치운다. 서비스 파일을 둘 자리를
+  #    잠가 두면 링크를 만든 뒤에 실패한다. 치운 뒤에는 다시 install 할 수 있어야
+  #    한다.
+  $run 'chattr +i /etc/systemd/system'
+  if ! $run 'cd /home/inst/a/csa-linux-amd64 && ./install.sh install >/root/install-fail.log 2>&1' \
+     && $run 'grep -q "치웠습니다" /root/install-fail.log && [ ! -e /opt/callsignet ] && [ ! -e /usr/local/bin/csa ] && [ ! -e /etc/systemd/system/csa.service ]'; then
+    say ok "$name" "처음 설치가 중간에 실패하면 만든 것을 치운다"
+  else
+    say 틀림 "$name" "처음 설치가 중간에 실패하면 만든 것을 치운다"
+    $run 'cat /root/install-fail.log; ls -la /opt/callsignet /usr/local/bin/csa 2>&1' | sed 's/^/        /'
+  fi
+  $run 'chattr -i /etc/systemd/system'
+
+  # 3. root가 처음 설치한다. 설정이 없으므로 서비스는 켜져 있되 뜨지 않는다.
   if $run 'cd /home/inst/a/csa-linux-amd64 && ./install.sh install >/root/install.log 2>&1'; then
     say ok "$name" "처음 설치가 끝난다"
   else
@@ -483,7 +496,29 @@ esac"
     $run 'cat /root/rollback4.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
 
-  # 15. 지운다. 문서의 명령 그대로다.
+  # 15. 지금 판의 이름이 <새 판>.tmp 여도 새 판을 두면서 지금 판을 지우지 않는다.
+  #     이름이 x.tmp 인 판을 먼저 올리고, 이름이 x 인 판을 올린다.
+  fake xtmp "#!/bin/sh
+case \"\$1\" in
+  version) echo $VER_A-x.tmp ;;
+  *) exec $A \"\$@\" ;;
+esac"
+  fake x "#!/bin/sh
+case \"\$1\" in
+  version) echo $VER_A-x ;;
+  *) exec $A \"\$@\" ;;
+esac"
+  if $run 'cd /root/xtmp && ./install.sh upgrade >/root/xtmp.log 2>&1' && [ "$(cur)" = "$VER_A-x.tmp" ] \
+     && $run 'cd /root/x && ./install.sh upgrade >/root/x.log 2>&1' \
+     && [ "$(cur)" = "$VER_A-x" ] && [ "$(prev)" = "$VER_A-x.tmp" ] \
+     && $run "[ -x /opt/callsignet/versions/$VER_A-x.tmp/bin/csa ]" && answers; then
+    say ok "$name" "지금 판의 이름이 새 판 이름에 .tmp를 붙인 것이어도 지금 판을 지우지 않는다"
+  else
+    say 틀림 "$name" "지금 판의 이름이 새 판 이름에 .tmp를 붙인 것이어도 지금 판을 지우지 않는다"
+    $run 'cat /root/xtmp.log /root/x.log; ls /opt/callsignet/versions' | sed 's/^/        /'
+  fi
+
+  # 16. 지운다. 문서의 명령 그대로다.
   $run 'systemctl disable --now csa >/dev/null 2>&1; rm -f /etc/systemd/system/csa.service /usr/local/bin/csa; systemctl daemon-reload; rm -rf /opt/callsignet'
   if $run '! systemctl is-enabled csa >/dev/null 2>&1 && [ ! -e /usr/local/bin/csa ] && [ ! -e /opt/callsignet ] && [ -f /etc/callsignet/private.key ]'; then
     say ok "$name" "지우면 서비스와 링크와 판이 사라지고 설정은 남는다"

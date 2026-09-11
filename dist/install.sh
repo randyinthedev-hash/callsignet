@@ -82,9 +82,13 @@ active() { systemctl is-active --quiet "$SERVICE"; }
 #
 # 같은 판의 디렉터리가 이미 있으면 치우고 다시 둔다. 앞서 사전 검사에 걸려
 # 멈춘 시도가 남긴 것이거나 앞 판이다. 지금 도는 판만은 건드리지 않는다.
+#
+# 옆에 만드는 자리의 이름은 점으로 시작한다. 판 이름은 글자나 숫자로 시작해야
+# 하므로 어떤 판의 디렉터리와도 겹치지 않는다. 판 이름 뒤에 .tmp를 붙여 쓰면
+# 지금 판의 이름이 <새 판>.tmp일 때 지금 판을 지운다.
 place() { # 판
   valid_version "$1" || die "판 이름으로 쓸 수 없는 값입니다: '$1'"
-  local dir="$VERSIONS/$1"
+  local dir="$VERSIONS/$1" stage
   if [ -e "$dir" ]; then
     if [ "$(readlink -f "$CURRENT" 2>/dev/null || true)" = "$dir" ]; then
       die "지금 도는 판입니다: $dir"
@@ -92,13 +96,13 @@ place() { # 판
     rm -rf "$dir"
   fi
   install -d -m 755 "$ROOT" "$VERSIONS"
-  rm -rf "$dir.tmp"
-  mkdir -p "$dir.tmp"
-  cp -a "$HERE/." "$dir.tmp/"
-  chown -R root:root "$dir.tmp"
-  chmod -R go-w "$dir.tmp"
-  chmod 0755 "$dir.tmp/bin/csa"
-  mv -T "$dir.tmp" "$dir"
+  stage=$(mktemp -d "$VERSIONS/.stage.XXXXXX") || die "옆에 만들 자리를 얻지 못했습니다: $VERSIONS"
+  if ! { cp -a "$HERE/." "$stage/" && chown -R root:root "$stage" \
+         && chmod -R go-w "$stage" && chmod 0755 "$stage/bin/csa"; }; then
+    rm -rf "$stage"
+    die "판을 옮기지 못했습니다: $dir"
+  fi
+  mv -T "$stage" "$dir" || { rm -rf "$stage"; die "판을 제자리에 놓지 못했습니다: $dir"; }
   # SELinux가 있으면 문맥을 이 자리의 기본값으로 되돌린다. cp -a가 묶음을 푼
   # 자리의 문맥을 그대로 가져오는데, 홈 디렉터리에서 풀었으면 그 문맥으로는
   # systemd가 실행 파일을 띄우지 못한다. /opt/*/bin/ 아래는 기본 정책이 bin_t를
@@ -223,18 +227,39 @@ move() { # 옮겨 갈 판  지금 판  무엇을 하는 것인지(올리기/되�
   die "$what 실패. 판 $from 으로 돌아왔는데 그것도 답하지 않습니다. journalctl -u $SERVICE 를 보십시오"
 }
 
+# 처음 설치에서 판을 둔 뒤에 하는 걸음이다. 어느 걸음이든 실패하면 0이 아닌
+# 값을 돌려준다.
+finish_install() { # 판
+  point "$CURRENT" "$VERSIONS/$1" || return 1
+  install -d -m 755 "$(dirname "$BIN")" || return 1
+  point "$BIN" "$CURRENT/bin/csa" || return 1
+  install -d -m 750 "$CONF" || return 1
+  place_unit || return 1
+  systemctl enable "$SERVICE" >/dev/null || return 1
+}
+
+# 처음 설치가 중간에 실패하면 만든 것을 치운다. 반쯤 설치된 채로 두면 다시
+# install 해도 「이미 설치되어 있다」로, upgrade 해도 「같은 판이다」로 거절해
+# 스크립트만으로는 다시 시도할 수 없다. 설정 디렉터리는 두고 간다. 운영자가
+# 거기에 무언가를 두었을 수 있다.
+undo_install() { # 판
+  systemctl disable "$SERVICE" >/dev/null 2>&1 || true
+  rm -f "$UNIT" "$BIN" "$BIN.tmp" "$CURRENT" "$CURRENT.tmp"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  rm -rf "$VERSIONS/$1"
+  rmdir "$VERSIONS" "$ROOT" 2>/dev/null || true
+}
+
 do_install() {
   need_root install
   [ -L "$CURRENT" ] && die "이미 설치되어 있습니다. 올리려면 $0 upgrade"
   local ver
   ver=$(bundle_version)
   place "$ver"
-  point "$CURRENT" "$VERSIONS/$ver" || die "링크를 만들지 못했습니다: $CURRENT"
-  install -d -m 755 "$(dirname "$BIN")"
-  point "$BIN" "$CURRENT/bin/csa" || die "링크를 만들지 못했습니다: $BIN"
-  install -d -m 750 "$CONF"
-  place_unit || die "서비스 파일을 두지 못했습니다: $UNIT"
-  systemctl enable "$SERVICE" >/dev/null
+  if ! finish_install "$ver"; then
+    undo_install "$ver"
+    die "설치 실패. 만든 것을 치웠습니다. 까닭을 고치고 다시 install 하십시오. 설정 디렉터리 $CONF 는 두었습니다"
+  fi
   say "설치했습니다. 판 $ver"
   say "다음 할 일:"
   say "  1. $CONF 에 csa.toml과 peers.toml과 policy.toml을 둔다. 자세한 것은 INSTALL.md"
