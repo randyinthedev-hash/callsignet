@@ -12,7 +12,7 @@ csa는 운영자가 적은 로컬 설정 파일로 움직인다. 머신마다 �
 
 ## 받기
 
-발행한 판은 [릴리스](https://github.com/randyinthedev-hash/callsignet/releases)에 있다. 정적으로 링크한 리눅스 바이너리를 붙여 둔다. 버전마다 무엇을 만들었는지는 [RELEASE_NOTES.md](RELEASE_NOTES.md)에 있다.
+발행한 판은 [릴리스](https://github.com/randyinthedev-hash/callsignet/releases)에 있다. 아키텍처마다 설치 묶음 하나를 붙여 둔다. 묶음 안에 정적으로 링크한 실행 파일과 systemd 서비스 파일과 설치 스크립트와 라이선스가 함께 들어 있다. 설치하고 올리고 되돌리는 절차는 [INSTALL.md](INSTALL.md)에 있다. 버전마다 무엇을 만들었는지는 [RELEASE_NOTES.md](RELEASE_NOTES.md)에 있다.
 
 ## 함께 만들기
 

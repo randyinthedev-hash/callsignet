@@ -28,7 +28,11 @@ import (
 
 // Version은 이 csa의 판이다. 설정 파일의 모양과 csa status가 내놓는 값이 판마다
 // 달라질 수 있으므로, 다른 프로그램이 csa를 부릴 때 이 값을 보고 맞춘다.
-const Version = "0.1.3"
+//
+// 상수가 아니라 변수다. 설치 시험이 같은 코드로 다른 판을 만들어 올리기와
+// 되돌리기를 밟아 보려면 -ldflags "-X main.Version=..."로 값을 바꿀 수 있어야
+// 한다. 발행할 때는 태그 워크플로가 이 값과 태그가 같은지 본다.
+var Version = "0.1.4"
 
 const usage = `csa — Callsignet agent
 

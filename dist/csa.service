@@ -1,0 +1,51 @@
+# csa를 systemd 서비스로 돌린다.
+#
+# csa는 root로 돈다. TUN 인터페이스를 만들고, 경로를 넣고, nftables 표를 걸고,
+# 이름 해석 설정을 고치는 데 그 권한이 필요하다. 그 대신 손댈 자리를 아래에서
+# 좁힌다. 이 파일은 설치 묶음에 들어 있고 install.sh가 제자리에 놓는다.
+
+[Unit]
+Description=Callsignet agent
+Documentation=https://github.com/randyinthedev-hash/callsignet
+After=network-online.target nftables.service
+Wants=network-online.target
+# 설정이 없으면 뜨지 않는다. 처음 설치한 뒤 설정을 두기 전에 실패를 되풀이하지
+# 않게 하려는 것이다. 설정을 둔 뒤에 운영자가 systemctl start csa를 한다.
+ConditionPathExists=/etc/callsignet/csa.toml
+
+[Service]
+Type=simple
+ExecStart=/opt/callsignet/current/csa run -c /etc/callsignet
+ExecReload=/opt/callsignet/current/csa reload -c /etc/callsignet
+# csa가 반쯤 걸린 상태로 멈추면 0이 아닌 값으로 끝난다. 그때 다시 띄우는 것이
+# 이 줄이다. 설계 문서의 「되돌리지도 못하면 csa는 멈춘다」가 이것을 전제한다.
+# 다시 뜬 csa는 설정 파일에서 처음부터 다시 건다.
+Restart=on-failure
+RestartSec=2
+# csa는 멈추면서 터널을 닫고 규칙을 지우고 이름 해석 설정을 되돌린다. 그 일이
+# 끝날 시간을 준다.
+TimeoutStopSec=20
+KillSignal=SIGTERM
+# csa status를 받을 소켓이 놓이는 자리다. systemd가 만들고 멈출 때 지운다.
+RuntimeDirectory=callsignet
+RuntimeDirectoryMode=0755
+
+# 아래는 root로 돌면서도 손댈 자리를 좁히는 것이다. csa가 실제로 쓰는 것만
+# 열어 둔다. 하나를 더 막을 때는 VM 시험을 다시 돌려 csa가 여전히 뜨는지 본다.
+NoNewPrivileges=yes
+# /usr와 /boot를 읽기 전용으로 둔다. /etc는 그대로 둔다. csa가 /etc/resolv.conf를
+# 고치기 때문이다.
+ProtectSystem=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+# TUN 장치만 연다. 다른 장치는 보이지 않는다.
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+
+[Install]
+WantedBy=multi-user.target

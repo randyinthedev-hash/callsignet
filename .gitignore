@@ -24,3 +24,6 @@ _workspace/
 /csa
 /csa-static
 *.test
+
+# 설치 묶음을 만드는 자리
+dist/out/

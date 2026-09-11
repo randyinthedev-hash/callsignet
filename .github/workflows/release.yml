@@ -69,7 +69,6 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch \
               go build -trimpath -ldflags "-w" -o "csa-linux-$arch" ./cmd/csa
           done
-          sha256sum csa-linux-* > sha256sum.txt
 
       # 소스를 잰 것과 붙이는 것이 같다는 보장은 없다. 붙일 바이너리를 그대로 잰다.
       - name: 붙일 바이너리를 잰다
@@ -78,11 +77,21 @@ jobs:
             go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode=binary "./csa-linux-$arch"
           done
 
+      # 실행 파일 하나만 내려받아도 서비스 파일과 설치 절차와 라이선스가 함께
+      # 오게 묶는다. make dist와 같은 스크립트로 묶으므로 소스에서 만든 것과
+      # 모양이 같다. 체크섬은 받는 쪽이 실제로 내려받는 묶음에 대해 만든다.
+      - name: 설치 묶음을 만든다
+        run: |
+          for arch in amd64 arm64; do
+            dist/pack.sh "csa-linux-$arch" "$arch" dist/out
+          done
+          cd dist/out && sha256sum *.tar.gz > sha256sum.txt && cat sha256sum.txt
+
       - name: 릴리스를 만든다
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "무엇을 만들었는지는 [릴리스 노트](RELEASE_NOTES.md)에 있습니다. 붙인 것은 정적으로 링크한 리눅스 바이너리입니다." \
-            csa-linux-amd64 csa-linux-arm64 sha256sum.txt THIRD-PARTY-NOTICES.md
+            --notes "무엇을 만들었는지는 [릴리스 노트](RELEASE_NOTES.md)에 있습니다. 묶음마다 정적으로 링크한 리눅스 바이너리와 systemd 서비스 파일과 설치 스크립트와 라이선스가 함께 들어 있습니다. 설치하는 방법은 묶음 안의 INSTALL.md에 있습니다." \
+            dist/out/*.tar.gz dist/out/sha256sum.txt LICENSE THIRD-PARTY-NOTICES.md
