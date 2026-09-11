@@ -11,6 +11,8 @@ help:
 	@echo "dist        설치 묶음을 만든다 (dist/out/csa-linux-amd64.tar.gz)"
 	@echo "vm          VM 둘에서 리졸버 갈래를 확인          (sudo)"
 	@echo "vm-teardown VM 정리                              (sudo)"
+	@echo "vm-install  깨끗한 VM 둘에서 설치·올리기·되돌리기 확인 (sudo)"
+	@echo "vm-install-teardown  그 VM 정리                  (sudo)"
 	@echo "preflight   준비물 점검 (root 불필요)"
 	@echo "setup       네임스페이스 둘을 만들고 wg로 잇는다  (sudo)"
 	@echo "check       허용 목록 밖 출발지가 버려지는지 확인  (sudo)"
@@ -32,7 +34,7 @@ cryptokey: preflight
 	$(CK)/check.sh
 	$(CK)/teardown.sh
 
-.PHONY: build build-static dist test tunnel vm vm-teardown
+.PHONY: build build-static dist test tunnel vm vm-teardown vm-install vm-install-teardown
 build:
 	go build -o csa ./cmd/csa
 test:
@@ -56,3 +58,9 @@ vm:
 
 vm-teardown:
 	poc/vm/run.sh --teardown
+
+vm-install:
+	poc/install/run.sh
+
+vm-install-teardown:
+	poc/install/run.sh --teardown

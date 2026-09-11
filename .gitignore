@@ -2,6 +2,7 @@
 poc/cryptokey/_work/
 poc/tunnel/_work/
 poc/vm/_work/
+poc/install/_work/
 *.key
 *.privkey
 
