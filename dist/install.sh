@@ -2,7 +2,7 @@
 # csa를 설치하고, 올리고, 되돌린다.
 #
 # 이 스크립트는 설치 묶음 안에 들어 있다. 묶음을 푼 자리에서 부른다. 묶음에는
-# csa 실행 파일과 csa.service와 이 스크립트와 라이선스가 있다.
+# bin/csa와 csa.service와 이 스크립트와 라이선스가 있다.
 #
 # 판마다 자기 디렉터리에 두고 심볼릭 링크 하나로 어느 판이 도는지 정한다.
 #
@@ -13,8 +13,9 @@
 #   /etc/systemd/system/csa.service  current/csa.service의 사본
 #   /etc/callsignet/                 설정. 이 스크립트는 만들기만 하고 채우지 않는다
 #
-# 올릴 때는 새 판의 csa로 지금 설정을 먼저 검사한다. 지나면 링크를 옮기고 다시
-# 띄운 뒤 csa가 답하는지 본다. 답하지 않으면 스스로 앞 판으로 되돌린다.
+# 올릴 때도 되돌릴 때도 같은 길을 밟는다. 옮겨 갈 판의 csa로 지금 설정을 먼저
+# 검사하고, 지나면 링크를 옮기고 다시 띄운 뒤, csa가 답하는지 본다. 답하지
+# 않으면 방금까지 돌던 판으로 스스로 돌아온다.
 set -euo pipefail
 
 ROOT=/opt/callsignet
@@ -33,8 +34,8 @@ usage() {
 사용법: $0 <명령>
 
   install    처음 설치한다. 설정은 만들지 않는다
-  upgrade    이 묶음의 판으로 올린다. 먼저 검사하고, 다시 띄운 뒤 답하지 않으면 되돌린다
-  rollback   바로 앞 판으로 되돌린다
+  upgrade    이 묶음의 판으로 옮긴다. 먼저 검사하고, 다시 띄운 뒤 답하지 않으면 돌아온다
+  rollback   바로 앞 판으로 옮긴다. 먼저 검사하고, 다시 띄운 뒤 답하지 않으면 돌아온다
   status     어느 판이 돌고 어느 판으로 되돌릴 수 있는지 보여 준다
 EOF
 }
@@ -60,16 +61,29 @@ linked_version() { # 링크
 active() { systemctl is-active --quiet "$SERVICE"; }
 
 # 판 디렉터리를 만든다. 묶음을 푼 그대로 옮긴다.
+#
+# 임자와 권한을 root의 것으로 못박는다. 묶음을 푼 사람이 일반 사용자면 푼
+# 파일의 임자가 그 사용자다. 그것을 그대로 옮기면 root로 도는 실행 파일을 그
+# 사용자가 고칠 수 있다. 다른 사용자가 쓸 수 없게 하는 것도 같은 까닭이다.
+#
+# 같은 판의 디렉터리가 이미 있으면 치우고 다시 둔다. 앞서 사전 검사에 걸려
+# 멈춘 시도가 남긴 것이거나 앞 판이다. 지금 도는 판만은 건드리지 않는다.
 place() { # 판
   local dir="$VERSIONS/$1"
   if [ -e "$dir" ]; then
-    die "그 판이 이미 있습니다: $dir. 다른 판을 올리거나 그 디렉터리를 치우십시오"
+    if [ "$(readlink -f "$CURRENT" 2>/dev/null || true)" = "$dir" ]; then
+      die "지금 도는 판입니다: $dir"
+    fi
+    rm -rf "$dir"
   fi
-  install -d -m 755 "$VERSIONS"
+  install -d -m 755 "$ROOT" "$VERSIONS"
+  rm -rf "$dir.tmp"
   mkdir -p "$dir.tmp"
   cp -a "$HERE/." "$dir.tmp/"
+  chown -R root:root "$dir.tmp"
+  chmod -R go-w "$dir.tmp"
   chmod 0755 "$dir.tmp/bin/csa"
-  mv "$dir.tmp" "$dir"
+  mv -T "$dir.tmp" "$dir"
   # SELinux가 있으면 문맥을 이 자리의 기본값으로 되돌린다. cp -a가 묶음을 푼
   # 자리의 문맥을 그대로 가져오는데, 홈 디렉터리에서 풀었으면 그 문맥으로는
   # systemd가 실행 파일을 띄우지 못한다. /opt/*/bin/ 아래는 기본 정책이 bin_t를
@@ -105,6 +119,61 @@ answers() {
   return 1
 }
 
+# 옮겨 갈 판의 csa로 지금 설정을 본다. 설정 파일의 모양이 판마다 달라질 수 있다.
+# 설정이 아직 없으면 볼 것이 없다.
+accepts_config() { # 판
+  [ -f "$CONF/csa.toml" ] || { say "설정이 아직 없어 검사를 건너뜁니다."; return 0; }
+  "$VERSIONS/$1/bin/csa" check -c "$CONF"
+}
+
+# 링크를 옮기고 서비스 파일을 맞춘다. 되돌릴 때는 인자를 바꿔 부른다.
+switch() { # 새로 돌 판  앞 판으로 적을 판
+  point "$PREVIOUS" "$VERSIONS/$2"
+  point "$CURRENT" "$VERSIONS/$1"
+  place_unit
+}
+
+# 다시 띄우고 답하는지 본다. systemctl restart 자체가 실패하는 자리가 있다.
+# 실행 파일을 띄우지 못하면 그 자리에서 0이 아닌 값이 돌아온다. 그것도 답하지
+# 않는 것과 같게 본다. set -e가 그 실패에서 스크립트를 멈추게 두면 링크가 새
+# 판을 가리킨 채로 남는다.
+restarted_and_answers() {
+  systemctl restart "$SERVICE" || return 1
+  answers
+}
+
+# 판을 옮긴다. 올리기와 되돌리기가 같은 길이다.
+#
+#   1. 옮겨 갈 판의 csa로 지금 설정을 검사한다. 걸리면 아무것도 바꾸지 않는다.
+#   2. 링크를 옮기고 서비스 파일을 맞춘다.
+#   3. 서비스가 돌고 있으면 다시 띄우고 답하는지 본다.
+#   4. 답하지 않으면 방금까지 돌던 판으로 링크를 되돌리고 다시 띄운다.
+move() { # 옮겨 갈 판  지금 판  무엇을 하는 것인지(올리기/되돌리기)
+  local to=$1 from=$2 what=$3
+  if ! accepts_config "$to"; then
+    die "$what: 판 $to 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다."
+  fi
+  switch "$to" "$from"
+  say "링크를 옮겼습니다. $from → $to"
+
+  if ! active; then
+    say "서비스가 돌고 있지 않아 다시 띄우지 않습니다. $what 끝. 판 $to"
+    return 0
+  fi
+  if restarted_and_answers; then
+    say "다시 띄웠고 csa가 답합니다. $what 끝. 판 $to"
+    return 0
+  fi
+  # 답하지 않으면 방금까지 돌던 판으로 돌아온다. 옮기다 멈춘 채로 두는 것보다
+  # 앞서 돌던 판이 도는 편이 낫다. 무엇이 잘못됐는지는 journalctl -u csa 에 남는다.
+  say "판 $to 이(가) 뜨지 않거나 답하지 않습니다. 판 $from 으로 돌아옵니다." >&2
+  switch "$from" "$to"
+  if restarted_and_answers; then
+    die "$what 실패. 판 $from 으로 돌아왔고 그것이 답합니다. 판 $to 은(는) 뜨지 못했습니다. journalctl -u $SERVICE 를 보십시오"
+  fi
+  die "$what 실패. 판 $from 으로 돌아왔는데 그것도 답하지 않습니다. journalctl -u $SERVICE 를 보십시오"
+}
+
 do_install() {
   need_root install
   [ -L "$CURRENT" ] && die "이미 설치되어 있습니다. 올리려면 $0 upgrade"
@@ -132,43 +201,16 @@ do_upgrade() {
   old=$(linked_version "$CURRENT")
   [ "$new" != "$old" ] || die "지금 도는 판과 같습니다: $old"
   place "$new"
-
-  # 새 판의 csa로 지금 설정을 먼저 본다. 설정 파일의 모양이 판마다 달라질 수
-  # 있다. 여기서 걸리면 아무것도 바꾸지 않는다.
-  if [ -f "$CONF/csa.toml" ]; then
-    if ! "$VERSIONS/$new/bin/csa" check -c "$CONF"; then
-      die "새 판 $new 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다. 설정을 고치거나 판을 다시 고르십시오"
+  if ! accepts_config "$new"; then
+    # 두었던 디렉터리를 치운다. 남겨 두면 다음 시도가 헷갈린다. 앞 판이 그
+    # 디렉터리면 두어야 한다. 되돌릴 자리가 사라진다.
+    if [ "$(readlink -f "$PREVIOUS" 2>/dev/null || true)" != "$VERSIONS/$new" ]; then
+      rm -rf "$VERSIONS/$new"
     fi
-    say "새 판 $new 이(가) 지금 설정을 받습니다."
-  else
-    say "설정이 아직 없어 검사를 건너뜁니다."
+    die "올리기: 새 판 $new 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다. 설정을 고치거나 판을 다시 고르십시오"
   fi
-
-  point "$PREVIOUS" "$VERSIONS/$old"
-  point "$CURRENT" "$VERSIONS/$new"
-  place_unit
-  say "링크를 옮겼습니다. $old → $new"
-
-  if ! active; then
-    say "서비스가 돌고 있지 않아 다시 띄우지 않습니다. 올렸습니다. 판 $new"
-    return
-  fi
-  systemctl restart "$SERVICE"
-  if answers; then
-    say "다시 띄웠고 csa가 답합니다. 올렸습니다. 판 $new"
-    return
-  fi
-  # 답하지 않으면 스스로 되돌린다. 올리다 멈춘 채로 두는 것보다 앞 판으로
-  # 도는 편이 낫다. 무엇이 잘못됐는지는 journalctl -u csa 에 남아 있다.
-  say "다시 띄운 csa가 답하지 않습니다. 앞 판 $old 으로 되돌립니다." >&2
-  point "$CURRENT" "$VERSIONS/$old"
-  point "$PREVIOUS" "$VERSIONS/$new"
-  place_unit
-  systemctl restart "$SERVICE" || true
-  if answers; then
-    die "되돌렸고 앞 판 $old 이(가) 답합니다. 새 판 $new 은(는) 뜨지 못했습니다. journalctl -u $SERVICE 를 보십시오"
-  fi
-  die "되돌렸는데 앞 판 $old 도 답하지 않습니다. journalctl -u $SERVICE 를 보십시오"
+  say "새 판 $new 이(가) 지금 설정을 받습니다."
+  move "$new" "$old" "올리기"
 }
 
 do_rollback() {
@@ -178,20 +220,8 @@ do_rollback() {
   local cur prev
   cur=$(linked_version "$CURRENT")
   prev=$(linked_version "$PREVIOUS")
-  point "$CURRENT" "$VERSIONS/$prev"
-  point "$PREVIOUS" "$VERSIONS/$cur"
-  place_unit
-  say "링크를 옮겼습니다. $cur → $prev"
-  if ! active; then
-    say "서비스가 돌고 있지 않아 다시 띄우지 않습니다. 되돌렸습니다. 판 $prev"
-    return
-  fi
-  systemctl restart "$SERVICE"
-  if answers; then
-    say "다시 띄웠고 csa가 답합니다. 되돌렸습니다. 판 $prev"
-    return
-  fi
-  die "되돌린 판 $prev 이(가) 답하지 않습니다. journalctl -u $SERVICE 를 보십시오"
+  [ -x "$VERSIONS/$prev/bin/csa" ] || die "앞 판의 실행 파일이 없습니다: $VERSIONS/$prev/bin/csa"
+  move "$prev" "$cur" "되돌리기"
 }
 
 do_status() {

@@ -221,28 +221,53 @@ say() { # ok/틀림 머신 설명
 }
 
 # 한 머신에서 INSTALL.md의 절차를 처음부터 끝까지 밟는다.
+#
+# 묶음은 일반 사용자가 홈에서 풀고 설치는 root가 한다. 실제로 그렇게 하는 사람이
+# 많고, 그때 설치된 파일의 임자가 그 사용자로 남으면 root로 도는 실행 파일을
+# 그 사용자가 고칠 수 있다.
+#
+# 뜨지 못하는 판을 셋 만든다. 실행 파일 자리에 판만 말하고 나머지는 지금 판의
+# csa에 넘기는 스크립트를 둔 것이다.
+#   crash    run이 바로 죽는다. 띄우기는 되지만 답하지 않는다
+#   nospawn  해석기가 /home 아래에 있다. 서비스 파일이 홈을 숨기므로 systemd가
+#            띄우지조차 못한다. systemctl restart 자체가 실패하는 자리다
+#   gate     /etc/callsignet/marker 가 있으면 check가 거절한다. 사전 검사가
+#            걸리는 자리와, 앞 판이 지금 설정을 거절하는 자리를 만든다
 walk() { # 이름 주소 peer-id 터널IP
   local name=$1 ip=$2 pid=$3 tip=$4
   local run="$SSH root@$ip"
+  local A="/opt/callsignet/versions/$VER_A/bin/csa"
   echo
   echo "== $name"
 
-  $SSH "root@$ip" 'mkdir -p /root/a /root/b'
-  $SCP "$WORK/a/csa-linux-amd64.tar.gz" "$WORK/a/sha256sum.txt" "root@$ip:/root/a/" >/dev/null
-  $SCP "$WORK/b/csa-linux-amd64.tar.gz" "$WORK/b/sha256sum.txt" "root@$ip:/root/b/" >/dev/null
+  $SSH "root@$ip" 'useradd -m inst 2>/dev/null || true; install -d -o inst -g inst /home/inst/a /home/inst/b'
+  $SCP "$WORK/a/csa-linux-amd64.tar.gz" "$WORK/a/sha256sum.txt" "root@$ip:/home/inst/a/" >/dev/null
+  $SCP "$WORK/b/csa-linux-amd64.tar.gz" "$WORK/b/sha256sum.txt" "root@$ip:/home/inst/b/" >/dev/null
+  $run 'chown -R inst:inst /home/inst/a /home/inst/b'
 
-  # 1. 묶음을 확인하고 푼다.
-  if $run 'cd /root/a && sha256sum -c --ignore-missing sha256sum.txt >/dev/null && tar -xzf csa-linux-amd64.tar.gz && cd /root/b && sha256sum -c --ignore-missing sha256sum.txt >/dev/null && tar -xzf csa-linux-amd64.tar.gz'; then
-    say ok "$name" "묶음의 체크섬이 맞고 풀린다"
+  # 1. 일반 사용자가 묶음을 확인하고 푼다.
+  if $run 'su - inst -c "cd ~/a && sha256sum -c --ignore-missing sha256sum.txt >/dev/null && tar -xzf csa-linux-amd64.tar.gz && cd ~/b && sha256sum -c --ignore-missing sha256sum.txt >/dev/null && tar -xzf csa-linux-amd64.tar.gz"'; then
+    say ok "$name" "일반 사용자가 푼 묶음의 체크섬이 맞고 풀린다"
   else
-    say 틀림 "$name" "묶음의 체크섬이 맞고 풀린다"; return
+    say 틀림 "$name" "일반 사용자가 푼 묶음의 체크섬이 맞고 풀린다"; return
   fi
 
-  # 2. 처음 설치. 설정이 없으므로 서비스는 켜져 있되 뜨지 않는다.
-  if $run 'cd /root/a/csa-linux-amd64 && ./install.sh install >/root/install.log 2>&1'; then
+  # 2. root가 처음 설치한다. 설정이 없으므로 서비스는 켜져 있되 뜨지 않는다.
+  if $run 'cd /home/inst/a/csa-linux-amd64 && ./install.sh install >/root/install.log 2>&1'; then
     say ok "$name" "처음 설치가 끝난다"
   else
     say 틀림 "$name" "처음 설치가 끝난다"; $run 'cat /root/install.log' | sed 's/^/        /'; return
+  fi
+  if [ "$($run 'find /opt/callsignet \( ! -user root -o ! -group root \) | wc -l')" = "0" ]; then
+    say ok "$name" "설치된 파일이 모두 root의 것이다"
+  else
+    say 틀림 "$name" "설치된 파일이 모두 root의 것이다"
+    $run 'find /opt/callsignet \( ! -user root -o ! -group root \) -ls | head' | sed 's/^/        /'
+  fi
+  if $run '! su - inst -c "test -w /opt/callsignet/current/bin/csa" && ! su - inst -c "sh -c \"echo x >> /opt/callsignet/current/bin/csa\"" 2>/dev/null'; then
+    say ok "$name" "묶음을 푼 일반 사용자가 설치된 실행 파일을 고치지 못한다"
+  else
+    say 틀림 "$name" "묶음을 푼 일반 사용자가 설치된 실행 파일을 고치지 못한다"
   fi
   if $run 'systemctl is-enabled csa >/dev/null 2>&1 && ! systemctl is-active csa >/dev/null 2>&1'; then
     say ok "$name" "서비스는 켜져 있고 설정이 없어 뜨지 않는다"
@@ -268,6 +293,8 @@ walk() { # 이름 주소 peer-id 터널IP
 
   # 4. 띄운다.
   answers() { $SSH "root@$ip" 'for i in $(seq 15); do csa status -c /etc/callsignet >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'; }
+  cur() { $SSH "root@$ip" 'basename $(readlink -f /opt/callsignet/current)' 2>/dev/null; }
+  prev() { $SSH "root@$ip" 'basename $(readlink -f /opt/callsignet/previous)' 2>/dev/null; }
   if $run 'systemctl start csa' && answers; then
     say ok "$name" "systemctl start 뒤 csa status가 답한다"
   else
@@ -282,21 +309,21 @@ walk() { # 이름 주소 peer-id 터널IP
   fi
 
   # 5. 올린다.
-  if $run 'cd /root/b/csa-linux-amd64 && ./install.sh upgrade >/root/upgrade.log 2>&1' \
+  if $run 'cd /home/inst/b/csa-linux-amd64 && ./install.sh upgrade >/root/upgrade.log 2>&1' \
      && [ "$($run 'csa version')" = "$VER_B" ] && answers; then
     say ok "$name" "올리면 판이 $VER_B 이 되고 csa가 답한다"
   else
     say 틀림 "$name" "올리면 판이 $VER_B 이 되고 csa가 답한다"
     $run 'cat /root/upgrade.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
-  if [ "$($run 'basename $(readlink -f /opt/callsignet/previous)')" = "$VER_A" ]; then
+  if [ "$(prev)" = "$VER_A" ]; then
     say ok "$name" "앞 판 링크가 $VER_A 을 가리킨다"
   else
     say 틀림 "$name" "앞 판 링크가 $VER_A 을 가리킨다"
   fi
 
   # 6. 되돌린다.
-  if $run 'cd /root/b/csa-linux-amd64 && ./install.sh rollback >/root/rollback.log 2>&1' \
+  if $run 'cd /home/inst/b/csa-linux-amd64 && ./install.sh rollback >/root/rollback.log 2>&1' \
      && [ "$($run 'csa version')" = "$VER_A" ] && answers; then
     say ok "$name" "되돌리면 판이 $VER_A 이 되고 csa가 답한다"
   else
@@ -304,34 +331,104 @@ walk() { # 이름 주소 peer-id 터널IP
     $run 'cat /root/rollback.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
 
-  # 7. 뜨지 못하는 판으로 올린다. 실행 파일 자리에 판만 말하고 뜨지는 않는
-  #    스크립트를 둔다. 검사는 지금 판의 csa에 넘긴다. 올리기는 실패로 끝나야
-  #    하고, 끝난 뒤에는 앞 판이 돌고 있어야 한다.
-  $run "cp -a /root/b/csa-linux-amd64 /root/c && cat > /root/c/bin/csa <<'EOF'
-#!/bin/sh
-case \"\$1\" in
-  version) echo $VER_A-bad ;;
-  check) exec /opt/callsignet/versions/$VER_A/bin/csa \"\$@\" ;;
-  *) echo '일부러 뜨지 않습니다' >&2; exit 1 ;;
-esac
+  # 뜨지 못하는 판을 만드는 도우미다. 판 이름과 스크립트 몸통을 받는다.
+  fake() { # 이름 판 몸통
+    $SSH "root@$ip" "rm -rf /root/$1 && cp -a /home/inst/b/csa-linux-amd64 /root/$1 && cat > /root/$1/bin/csa <<'EOF'
+$3
 EOF
-chmod 755 /root/c/bin/csa"
-  if ! $run 'cd /root/c && ./install.sh upgrade >/root/bad.log 2>&1' \
-     && [ "$($run 'csa version')" = "$VER_A" ] && answers; then
-    say ok "$name" "뜨지 못하는 판으로 올리면 스스로 앞 판으로 되돌린다"
+chmod 755 /root/$1/bin/csa"
+  }
+  fake crash "$VER_A-crash" "#!/bin/sh
+case \"\$1\" in
+  version) echo $VER_A-crash ;;
+  run) echo '일부러 죽습니다' >&2; exit 1 ;;
+  *) exec $A \"\$@\" ;;
+esac"
+  $run 'cp -L /bin/sh /home/inst/sh && chmod 755 /home/inst/sh'
+  fake nospawn "$VER_A-nospawn" "#!/home/inst/sh
+case \"\$1\" in
+  version) echo $VER_A-nospawn ;;
+  *) exec $A \"\$@\" ;;
+esac"
+  fake gate "$VER_A-gate" "#!/bin/sh
+case \"\$1\" in
+  version) echo $VER_A-gate ;;
+  check) if [ -e /etc/callsignet/marker ]; then echo '일부러 거절합니다' >&2; exit 1; fi; exec $A \"\$@\" ;;
+  *) exec $A \"\$@\" ;;
+esac"
+
+  # 7. 떠서 바로 죽는 판으로 올린다. 올리기는 실패로 끝나야 하고, 끝난 뒤에는
+  #    앞 판이 돌고 있어야 한다.
+  if ! $run 'cd /root/crash && ./install.sh upgrade >/root/crash.log 2>&1' \
+     && [ "$(cur)" = "$VER_A" ] && answers; then
+    say ok "$name" "떠서 바로 죽는 판으로 올리면 스스로 앞 판으로 돌아온다"
   else
-    say 틀림 "$name" "뜨지 못하는 판으로 올리면 스스로 앞 판으로 되돌린다"
-    $run 'cat /root/bad.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+    say 틀림 "$name" "떠서 바로 죽는 판으로 올리면 스스로 앞 판으로 돌아온다"
+    $run 'cat /root/crash.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+  fi
+  # 8. 그 판이 이제 앞 판이다. 거기로 되돌리기를 시도하면 검사는 지나지만 뜨지
+  #    못하므로, 원래 돌던 판으로 돌아와야 한다.
+  if [ "$(prev)" = "$VER_A-crash" ] && ! $run 'cd /root/crash && ./install.sh rollback >/root/rollback2.log 2>&1' \
+     && [ "$(cur)" = "$VER_A" ] && answers; then
+    say ok "$name" "앞 판이 뜨지 못하면 되돌리기가 원래 판으로 돌아온다"
+  else
+    say 틀림 "$name" "앞 판이 뜨지 못하면 되돌리기가 원래 판으로 돌아온다"
+    $run 'cat /root/rollback2.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
 
-  # 8. 지운다. 문서의 명령 그대로다.
+  # 9. systemd가 띄우지조차 못하는 판으로 올린다. systemctl restart가 실패하는
+  #    자리다. 그래도 앞 판으로 돌아와야 한다.
+  if ! $run 'cd /root/nospawn && ./install.sh upgrade >/root/nospawn.log 2>&1' \
+     && [ "$(cur)" = "$VER_A" ] && answers; then
+    say ok "$name" "다시 띄우기 자체가 실패해도 앞 판으로 돌아온다"
+  else
+    say 틀림 "$name" "다시 띄우기 자체가 실패해도 앞 판으로 돌아온다"
+    $run 'cat /root/nospawn.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+  fi
+
+  # 10. 사전 검사에 걸리는 판. 두 번 시도해도 같은 까닭으로 막히고, 까닭을
+  #     치우면 같은 묶음으로 올라간다.
+  $run 'touch /etc/callsignet/marker'
+  if ! $run 'cd /root/gate && ./install.sh upgrade >/root/gate1.log 2>&1' \
+     && ! $run 'cd /root/gate && ./install.sh upgrade >/root/gate2.log 2>&1' \
+     && $run 'grep -q "받지 않습니다" /root/gate2.log' \
+     && [ "$(cur)" = "$VER_A" ] && answers; then
+    say ok "$name" "사전 검사에 걸리면 아무것도 바꾸지 않고 같은 묶음으로 다시 시도할 수 있다"
+  else
+    say 틀림 "$name" "사전 검사에 걸리면 아무것도 바꾸지 않고 같은 묶음으로 다시 시도할 수 있다"
+    $run 'cat /root/gate1.log /root/gate2.log' | sed 's/^/        /'
+  fi
+  $run 'rm -f /etc/callsignet/marker'
+  if $run 'cd /root/gate && ./install.sh upgrade >/root/gate3.log 2>&1' \
+     && [ "$(cur)" = "$VER_A-gate" ] && answers; then
+    say ok "$name" "까닭을 치우면 같은 묶음으로 올라간다"
+  else
+    say 틀림 "$name" "까닭을 치우면 같은 묶음으로 올라간다"
+    $run 'cat /root/gate3.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+  fi
+
+  # 11. 앞 판이 지금 설정을 거절하면 되돌리기는 옮기기 전에 멈춘다. 지금 판은
+  #     gate이고 거기서 B로 올린 뒤 marker를 두면, 앞 판인 gate가 거절한다.
+  $run 'cd /home/inst/b/csa-linux-amd64 && ./install.sh upgrade >/root/upgrade2.log 2>&1' || true
+  $run 'touch /etc/callsignet/marker'
+  if [ "$(cur)" = "$VER_B" ] && [ "$(prev)" = "$VER_A-gate" ] \
+     && ! $run 'cd /root/gate && ./install.sh rollback >/root/rollback3.log 2>&1' \
+     && $run 'grep -q "받지 않습니다" /root/rollback3.log' \
+     && [ "$(cur)" = "$VER_B" ] && answers; then
+    say ok "$name" "앞 판이 지금 설정을 거절하면 되돌리기가 옮기기 전에 멈춘다"
+  else
+    say 틀림 "$name" "앞 판이 지금 설정을 거절하면 되돌리기가 옮기기 전에 멈춘다"
+    $run 'cat /root/upgrade2.log /root/rollback3.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+  fi
+  $run 'rm -f /etc/callsignet/marker'
+
+  # 12. 지운다. 문서의 명령 그대로다.
   $run 'systemctl disable --now csa >/dev/null 2>&1; rm -f /etc/systemd/system/csa.service /usr/local/bin/csa; systemctl daemon-reload; rm -rf /opt/callsignet'
   if $run '! systemctl is-enabled csa >/dev/null 2>&1 && [ ! -e /usr/local/bin/csa ] && [ ! -e /opt/callsignet ] && [ -f /etc/callsignet/private.key ]'; then
     say ok "$name" "지우면 서비스와 링크와 판이 사라지고 설정은 남는다"
   else
     say 틀림 "$name" "지우면 서비스와 링크와 판이 사라지고 설정은 남는다"
   fi
-  # 멈추면서 되돌렸는지도 본다. 인터페이스가 남아 있으면 되돌리지 못한 것이다.
   if $run '! ip link show cs0 >/dev/null 2>&1'; then
     say ok "$name" "멈춘 뒤 인터페이스가 남지 않는다"
   else
