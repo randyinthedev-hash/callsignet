@@ -200,3 +200,24 @@ func TestReadSecret상위디렉터리의링크도본다(t *testing.T) {
 		t.Fatalf("까닭을 자리의 권한이라고 적지 않았다: %v", err)
 	}
 }
+
+// TestLoadPSK자리가아직없으면없는것으로본다는 사전 공유키를 둘 자리가 아직
+// 만들어지지 않은 설정을 본다.
+//
+// psk.mode가 optional이면 키가 없는 것은 잘못이 아니다. 그 자리의 디렉터리가
+// 아직 없는 것도 마찬가지다. 비밀 파일이 놓인 자리를 보는 검사를 여는 것보다
+// 먼저 하면 그 둘을 가리지 못해, 키를 아직 나르지 않은 머신에서 csa가 뜨지
+// 못한다.
+func TestLoadPSK자리가아직없으면없는것으로본다(t *testing.T) {
+	c := &Config{
+		Self:  Self{PeerID: "srv-a", PSK: PSK{Dir: filepath.Join(t.TempDir(), "아직없다")}},
+		Peers: []Peer{{PeerID: "srv-a"}, {PeerID: "srv-b"}},
+	}
+	key, ok, err := c.LoadPSK("srv-b")
+	if err != nil {
+		t.Fatalf("자리가 없는 것을 잘못으로 보았다: %v", err)
+	}
+	if ok || key != "" {
+		t.Fatalf("없는 키를 있다고 했다: %q", key)
+	}
+}

@@ -25,11 +25,6 @@ const secretLimit = 4096
 // FIFO나 장치 파일을 열 때 csa가 멈추지 않게 한다. FIFO는 일반 파일이 아니므로
 // 검사에서 걸린다. csa는 거기서 멈추지 않고 까닭을 적고 나온다.
 func ReadSecret(kind, path string) ([]byte, error) {
-	// 파일 자체의 임자와 권한만 보아서는 모자란다. 그 파일이 놓인 디렉터리를
-	// 남이 고칠 수 있으면 그 사람이 파일을 통째로 갈아 끼울 수 있다.
-	if err := safePath(kind, path); err != nil {
-		return nil, err
-	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -41,6 +36,16 @@ func ReadSecret(kind, path string) ([]byte, error) {
 		return nil, fmt.Errorf("%s 파일을 열 수 없다: %s", kind, path)
 	}
 	defer f.Close()
+
+	// 자리를 보는 것은 연 뒤에 한다. 먼저 보면 파일이 없는 것과 그 파일이 놓일
+	// 자리가 아직 없는 것을 가를 수 없다. 부르는 쪽은 그 둘을 가려야 한다.
+	// 여는 것만으로는 내용을 읽지 않으므로 순서를 바꾸어도 안전하다.
+	//
+	// 파일 자체의 임자와 권한만 보아서는 모자란다. 그 파일이 놓인 디렉터리를
+	// 남이 고칠 수 있으면 그 사람이 파일을 통째로 갈아 끼울 수 있다.
+	if err := safePath(kind, path); err != nil {
+		return nil, err
+	}
 
 	fi, err := f.Stat()
 	if err != nil {
