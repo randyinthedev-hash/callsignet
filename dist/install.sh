@@ -164,7 +164,12 @@ set_state() { # 지금 판  앞 판(비어 있을 수 있음)
 # 다시 띄우고 답하는지 본다. systemctl restart 자체가 실패하는 자리가 있다.
 # 실행 파일을 띄우지 못하면 그 자리에서 0이 아닌 값이 돌아온다. 그것도 답하지
 # 않는 것과 같게 본다.
+#
+# 띄우기 전에 실패 상태를 푼다. 앞서 뜨지 못한 판이 되풀이해 죽었으면 systemd가
+# 기동 횟수 제한에 걸려 그 유닛의 기동을 잠시 막는다. 풀지 않으면 좋은 판으로
+# 돌아와도 뜨지 못한다. 그 판은 죽은 적이 없는데 앞 판이 죽은 값을 치른다.
 restarted_and_answers() {
+  systemctl reset-failed "$SERVICE" 2>/dev/null || true
   systemctl restart "$SERVICE" || return 1
   answers
 }

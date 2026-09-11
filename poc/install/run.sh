@@ -488,7 +488,7 @@ esac"
     say 틀림 "$name" "돌아오지도 못하면 돌아왔다고 하지 않고 반쯤 옮겨진 상태라고 말한다"
     $run 'cat /root/lock.log' | sed 's/^/        /'
   fi
-  if $run 'systemctl stop csa; chattr -i /opt/callsignet && cd /root/lock && ./install.sh rollback >/root/rollback4.log 2>&1 && systemctl start csa' \
+  if $run 'systemctl stop csa; chattr -i /opt/callsignet && cd /root/lock && ./install.sh rollback >/root/rollback4.log 2>&1 && systemctl reset-failed csa && systemctl start csa' \
      && [ "$(cur)" = "$VER_B" ] && answers; then
     say ok "$name" "서비스를 멈추고 까닭을 치운 뒤 되돌리면 회복한다"
   else

@@ -101,6 +101,8 @@ sudo csa status -c /etc/callsignet
 
 **csa가 스스로 멈추는 자리가 하나 있다.** 설정을 다시 읽다 실패하고 되돌리지도 못하면 csa는 터널을 닫고 0이 아닌 값으로 끝난다. 그때 직통 경로 규칙은 일부러 남긴다. `csa.service`의 `Restart=on-failure`가 csa를 다시 띄우고, 다시 뜬 csa는 설정 파일에서 처음부터 다시 건다. 이것이 설계 문서의 「되돌리지도 못하면 csa는 멈춘다」가 전제하는 것이다.
 
+다시 띄워도 곧바로 또 죽기를 10초 안에 다섯 번 되풀이하면 systemd가 그 유닛의 기동을 막는다. `systemctl status csa`에 `start-limit-hit`가 보인다. 까닭을 고친 뒤 `systemctl reset-failed csa`로 풀고 `systemctl start csa`를 한다. `install.sh`는 판을 옮기며 다시 띄우기 전에 이것을 스스로 푼다. 앞 판이 되풀이해 죽은 값을 좋은 판이 치르지 않게 하려는 것이다.
+
 `peers.toml`과 `policy.toml`과 사전 공유키는 도는 중에 갈아 끼우고 `reload`를 하면 된다. `csa.toml`은 그럴 수 없다. 거기 적힌 값은 TUN 인터페이스와 개인키와 리슨 주소를 정한다. 그것을 바꾸면 `systemctl restart csa`를 한다.
 
 ## 올리기
@@ -122,7 +124,7 @@ sudo ./install.sh upgrade
 
 3번에서 링크를 옮긴 뒤 서비스 파일을 쓰지 못해도 같다. 시도 전 그대로 돌아오고 아무것도 바뀌지 않았다고 말한다.
 
-**돌아오지도 못하면 스크립트는 「돌아왔다」고 하지 않는다.** 「반쯤 옮겨진 상태」라고 말하고, `current`와 `previous`가 무엇을 가리키는지, 서비스 파일이 지금 판의 것인지, 서비스가 도는지를 그대로 적고 2로 끝난다. 그때는 운영자가 서비스를 멈추고 까닭을 치운 뒤 마지막으로 돌던 판의 묶음으로 `upgrade`를 하거나 `rollback`을 한다. `./install.sh status`가 지금 링크와 서비스 파일이 맞는지 보여 준다.
+**돌아오지도 못하면 스크립트는 「돌아왔다」고 하지 않는다.** 「반쯤 옮겨진 상태」라고 말하고, `current`와 `previous`가 무엇을 가리키는지, 서비스 파일이 지금 판의 것인지, 서비스가 도는지를 그대로 적고 2로 끝난다. 그때는 운영자가 `systemctl stop csa`로 서비스를 멈추고, 까닭을 치우고, 마지막으로 돌던 판의 묶음으로 `upgrade`를 하거나 `rollback`을 한 뒤, `systemctl reset-failed csa`로 실패 상태를 풀고 `systemctl start csa`를 한다. `./install.sh status`가 지금 링크와 서비스 파일이 맞는지 보여 준다.
 
 스크립트는 묶음의 `bin/csa version`이 말하는 값을 판 이름으로 쓴다. 그 값이 비어 있거나 `.`이나 `..`이거나 슬래시가 들어 있으면 아무것도 바꾸지 않고 거절한다. 판 이름이 디렉터리 이름이 되고 그 디렉터리를 지우기도 하기 때문이다.
 
