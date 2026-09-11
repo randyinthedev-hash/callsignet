@@ -382,6 +382,42 @@ $2
 EOF
 chmod 755 /root/$1/bin/csa"
   }
+
+  # 앞 판이라는 이름을 단 다른 묶음으로 올리다 실패해도 앞 판의 원본이 그대로
+  # 남는다. 검사에 걸리는 것과 뜨지 못하는 것 둘 다다. 앞 판을 밀어 두고 새것을
+  # 놓은 뒤에 실패하는 자리다. 밀어 둔 것을 지워 버리면 되돌릴 자리를 잃는다.
+  local bsum
+  bsum=$($run "sha256sum /opt/callsignet/versions/$VER_B/bin/csa | cut -d' ' -f1")
+  fake asb-check "#!/bin/sh
+case \"\$1\" in
+  version) echo $VER_B ;;
+  check) echo '일부러 거절합니다' >&2; exit 1 ;;
+  *) exec $A \"\$@\" ;;
+esac"
+  fake asb-run "#!/bin/sh
+case \"\$1\" in
+  version) echo $VER_B ;;
+  run) echo '일부러 죽습니다' >&2; exit 1 ;;
+  *) exec $A \"\$@\" ;;
+esac"
+  if ! $run 'cd /root/asb-check && ./install.sh upgrade >/root/asb-check.log 2>&1' \
+     && [ "$($run "sha256sum /opt/callsignet/versions/$VER_B/bin/csa | cut -d' ' -f1")" = "$bsum" ] \
+     && [ "$(cur)" = "$VER_A" ] && [ "$(prev)" = "$VER_B" ] \
+     && $run "[ \"\$(ls -A /opt/callsignet/versions | grep -c '^\\.')\" = 0 ]" && answers; then
+    say ok "$name" "앞 판의 이름을 단 묶음이 검사에 걸리면 앞 판의 원본이 그대로 남는다"
+  else
+    say 틀림 "$name" "앞 판의 이름을 단 묶음이 검사에 걸리면 앞 판의 원본이 그대로 남는다"
+    $run "cat /root/asb-check.log; ls -la /opt/callsignet/versions; sha256sum /opt/callsignet/versions/$VER_B/bin/csa" | sed 's/^/        /'
+  fi
+  if ! $run 'cd /root/asb-run && ./install.sh upgrade >/root/asb-run.log 2>&1' \
+     && [ "$($run "sha256sum /opt/callsignet/versions/$VER_B/bin/csa | cut -d' ' -f1")" = "$bsum" ] \
+     && [ "$(cur)" = "$VER_A" ] && [ "$(prev)" = "$VER_B" ] \
+     && $run "[ \"\$(ls -A /opt/callsignet/versions | grep -c '^\\.')\" = 0 ]" && answers; then
+    say ok "$name" "앞 판의 이름을 단 묶음이 뜨지 못하면 시도 전으로 돌아오고 앞 판의 원본이 그대로 남는다"
+  else
+    say 틀림 "$name" "앞 판의 이름을 단 묶음이 뜨지 못하면 시도 전으로 돌아오고 앞 판의 원본이 그대로 남는다"
+    $run "cat /root/asb-run.log; ls -la /opt/callsignet/versions; sha256sum /opt/callsignet/versions/$VER_B/bin/csa; journalctl -u csa --no-pager | tail -10" | sed 's/^/        /'
+  fi
   fake flaky "#!/bin/sh
 case \"\$1\" in
   version) echo $VER_A-flaky ;;

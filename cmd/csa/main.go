@@ -32,7 +32,7 @@ import (
 // 상수가 아니라 변수다. 설치 시험이 같은 코드로 다른 판을 만들어 올리기와
 // 되돌리기를 밟아 보려면 -ldflags "-X main.Version=..."로 값을 바꿀 수 있어야
 // 한다. 발행할 때는 태그 워크플로가 이 값과 태그가 같은지 본다.
-var Version = "0.1.4"
+var Version = "0.1.5"
 
 const usage = `csa — Callsignet agent
 

@@ -85,8 +85,11 @@ active() { systemctl is-active --quiet "$SERVICE"; }
 # 지금 판의 이름이 <새 판>.tmp일 때 지금 판을 지운다.
 #
 # 같은 판의 디렉터리가 이미 있으면 새것을 옆에 다 만든 뒤에야 있던 것을 밀어
-# 두고 새것을 놓는다. 있던 것을 먼저 지우고 만들다 실패하면, 그것이 앞 판일 때
-# 되돌릴 자리가 사라진다. 지금 도는 판만은 건드리지 않는다.
+# 두고 새것을 놓는다. 밀어 둔 것은 지우지 않고 OLD에 적어 둔다. 옮기기가 끝까지
+# 되어야 settle이 지우고, 어디서든 실패하면 unplace가 제자리로 되돌린다. 있던
+# 것이 앞 판이면 그것이 되돌릴 자리다. 새것이 검사에 걸리거나 뜨지 못했는데
+# 있던 것을 이미 지웠으면 되돌릴 자리를 잃는다. 지금 도는 판만은 건드리지 않는다.
+OLD=""
 place() { # 판
   valid_version "$1" || die "판 이름으로 쓸 수 없는 값입니다: '$1'"
   local dir="$VERSIONS/$1" stage old
@@ -111,7 +114,7 @@ place() { # 판
       rm -rf "$stage"
       die "새 판을 놓지 못했습니다. 있던 판은 그대로입니다: $dir"
     fi
-    rm -rf "$old"
+    OLD=$old
   else
     mv -T "$stage" "$dir" || { rm -rf "$stage"; die "판을 제자리에 놓지 못했습니다: $dir"; }
   fi
@@ -123,6 +126,31 @@ place() { # 판
     restorecon -R "$dir"
   fi
   say "판을 두었습니다: $dir"
+}
+
+# settle은 옮기기가 끝난 뒤 밀어 두었던 앞 사본을 지운다.
+settle() {
+  [ -n "$OLD" ] && rm -rf "$OLD"
+  OLD=""
+}
+
+# unplace는 새로 둔 판을 치운다. 밀어 두었던 사본이 있으면 그것을 제자리로
+# 되돌린다. 새것을 옆으로 밀고 옛것을 놓은 뒤에 새것을 지운다. 그 사이에 잠깐
+# 그 이름이 비지만 그 판은 지금 도는 판이 아니다. 되돌리지 못하면 옛 사본이
+# 어디 있는지 말한다.
+unplace() { # 판
+  local dir="$VERSIONS/$1" failed
+  if [ -n "$OLD" ]; then
+    failed=$(mktemp -d "$VERSIONS/.failed.XXXXXX") || { say "옛 판을 제자리로 돌리지 못했습니다. 옛 판은 $OLD 에 있습니다." >&2; return 1; }
+    if mv -T "$dir" "$failed" && mv -T "$OLD" "$dir"; then
+      rm -rf "$failed"
+      OLD=""
+      return 0
+    fi
+    say "옛 판을 제자리로 돌리지 못했습니다. 옛 판은 $OLD 에, 새 판은 $failed 에 있습니다. 손으로 맞추십시오." >&2
+    return 1
+  fi
+  rm -rf "$dir"
 }
 
 # 링크를 바꾼다. 옆에 만들어 한 번에 옮기므로 링크가 없는 순간이 없다.
@@ -188,11 +216,13 @@ restarted_and_answers() {
 
 # 되돌리지도 못했을 때 말한다. 「돌아왔다」고 하지 않는다. 지금 링크가 무엇을
 # 가리키고 서비스 파일이 어느 것인지 그대로 적는다. 손으로 맞추는 사람이 볼 것이다.
+# 밀어 둔 앞 사본은 건드리지 않고 어디 있는지만 적는다.
 mixed() { # 무엇  마지막으로 돌던 판
   {
     echo "오류: $1 실패. 되돌리지도 못했습니다. 이 머신은 반쯤 옮겨진 상태입니다."
     echo "  current  → $(readlink "$CURRENT" 2>/dev/null || echo 없음)"
     echo "  previous → $(readlink "$PREVIOUS" 2>/dev/null || echo 없음)"
+    [ -n "$OLD" ] && echo "  새 판을 두며 밀어 둔 옛 사본: $OLD"
     if cmp -s "$CURRENT/csa.service" "$UNIT" 2>/dev/null; then
       echo "  서비스 파일: current의 것과 같습니다"
     else
@@ -212,26 +242,35 @@ mixed() { # 무엇  마지막으로 돌던 판
 #   3. 서비스가 돌고 있으면 다시 띄우고 답하는지 본다.
 #   4. 답하지 않으면 시도 전 그대로 돌아오고 다시 띄운다.
 #   5. 돌아오지도 못하면 반쯤 옮겨진 상태라고 말한다.
+#
+# 시도 전으로 돌아오는 자리마다 UNDO를 부른다. 올리기는 여기에 새로 둔 판을
+# 치우고 밀어 둔 사본을 되돌리는 일을 건다. 되돌리기는 걸 것이 없다.
+UNDO=""
+undo() { [ -n "$UNDO" ] && $UNDO; true; }
 move() { # 옮겨 갈 판  지금 판  무엇을 하는 것인지(올리기/되돌리기)
   local to=$1 from=$2 what=$3 oldprev
   oldprev=$(linked_version "$PREVIOUS")
   if ! accepts_config "$to"; then
+    undo
     die "$what: 판 $to 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다."
   fi
 
   if ! set_state "$to" "$from"; then
     say "링크나 서비스 파일을 옮기다 실패했습니다. 시도 전 그대로 돌아옵니다." >&2
     set_state "$from" "$oldprev" || mixed "$what" "$from"
+    undo
     die "$what 실패. 링크나 서비스 파일을 옮기지 못했습니다. 시도 전 그대로 돌아왔고 아무것도 바뀌지 않았습니다."
   fi
   say "링크를 옮겼습니다. $from → $to"
 
   if ! active; then
     say "서비스가 돌고 있지 않아 다시 띄우지 않습니다. $what 끝. 판 $to"
+    settle
     return 0
   fi
   if restarted_and_answers; then
     say "다시 띄웠고 csa가 답합니다. $what 끝. 판 $to"
+    settle
     return 0
   fi
   # 답하지 않으면 시도 전 그대로 돌아온다. 옮기다 멈춘 채로 두는 것보다 앞서
@@ -239,8 +278,10 @@ move() { # 옮겨 갈 판  지금 판  무엇을 하는 것인지(올리기/되�
   say "판 $to 이(가) 뜨지 않거나 답하지 않습니다. 판 $from 으로 돌아옵니다." >&2
   set_state "$from" "$oldprev" || mixed "$what" "$from"
   if restarted_and_answers; then
+    undo
     die "$what 실패. 판 $from 으로 돌아왔고 그것이 답합니다. 판 $to 은(는) 뜨지 못했습니다. journalctl -u $SERVICE 를 보십시오"
   fi
+  undo
   die "$what 실패. 판 $from 으로 돌아왔는데 그것도 답하지 않습니다. journalctl -u $SERVICE 를 보십시오"
 }
 
@@ -320,12 +361,11 @@ do_upgrade() {
   old=$(linked_version "$CURRENT")
   [ "$new" != "$old" ] || die "지금 도는 판과 같습니다: $old"
   place "$new"
+  # 어디서든 실패하면 두었던 디렉터리를 치운다. 남겨 두면 다음 시도가 헷갈린다.
+  # 같은 이름의 판이 있었으면 그것을 제자리로 되돌린다. 앞 판이 그것일 수 있다.
+  UNDO="unplace $new"
   if ! accepts_config "$new"; then
-    # 두었던 디렉터리를 치운다. 남겨 두면 다음 시도가 헷갈린다. 앞 판이 그
-    # 디렉터리면 두어야 한다. 되돌릴 자리가 사라진다.
-    if [ "$(readlink -f "$PREVIOUS" 2>/dev/null || true)" != "$VERSIONS/$new" ]; then
-      rm -rf "$VERSIONS/$new"
-    fi
+    undo
     die "올리기: 새 판 $new 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다. 설정을 고치거나 판을 다시 고르십시오"
   fi
   say "새 판 $new 이(가) 지금 설정을 받습니다."
