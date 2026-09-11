@@ -307,15 +307,15 @@ walk() { # 이름 주소 peer-id 터널IP
   # 7. 뜨지 못하는 판으로 올린다. 실행 파일 자리에 판만 말하고 뜨지는 않는
   #    스크립트를 둔다. 검사는 지금 판의 csa에 넘긴다. 올리기는 실패로 끝나야
   #    하고, 끝난 뒤에는 앞 판이 돌고 있어야 한다.
-  $run "cp -a /root/b/csa-linux-amd64 /root/c && cat > /root/c/csa <<'EOF'
+  $run "cp -a /root/b/csa-linux-amd64 /root/c && cat > /root/c/bin/csa <<'EOF'
 #!/bin/sh
 case \"\$1\" in
   version) echo $VER_A-bad ;;
-  check) exec /opt/callsignet/versions/$VER_A/csa \"\$@\" ;;
+  check) exec /opt/callsignet/versions/$VER_A/bin/csa \"\$@\" ;;
   *) echo '일부러 뜨지 않습니다' >&2; exit 1 ;;
 esac
 EOF
-chmod 755 /root/c/csa"
+chmod 755 /root/c/bin/csa"
   if ! $run 'cd /root/c && ./install.sh upgrade >/root/bad.log 2>&1' \
      && [ "$($run 'csa version')" = "$VER_A" ] && answers; then
     say ok "$name" "뜨지 못하는 판으로 올리면 스스로 앞 판으로 되돌린다"

@@ -15,8 +15,8 @@ ConditionPathExists=/etc/callsignet/csa.toml
 
 [Service]
 Type=simple
-ExecStart=/opt/callsignet/current/csa run -c /etc/callsignet
-ExecReload=/opt/callsignet/current/csa reload -c /etc/callsignet
+ExecStart=/opt/callsignet/current/bin/csa run -c /etc/callsignet
+ExecReload=/opt/callsignet/current/bin/csa reload -c /etc/callsignet
 # csa가 반쯤 걸린 상태로 멈추면 0이 아닌 값으로 끝난다. 그때 다시 띄우는 것이
 # 이 줄이다. 설계 문서의 「되돌리지도 못하면 csa는 멈춘다」가 이것을 전제한다.
 # 다시 뜬 csa는 설정 파일에서 처음부터 다시 건다.

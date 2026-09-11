@@ -6,10 +6,10 @@
 #
 # 판마다 자기 디렉터리에 두고 심볼릭 링크 하나로 어느 판이 도는지 정한다.
 #
-#   /opt/callsignet/versions/<판>/   묶음을 푼 그대로
+#   /opt/callsignet/versions/<판>/   묶음을 푼 그대로. 실행 파일은 bin/csa
 #   /opt/callsignet/current          지금 도는 판을 가리키는 링크
 #   /opt/callsignet/previous         바로 앞 판을 가리키는 링크. 되돌릴 때 쓴다
-#   /usr/local/bin/csa               current/csa를 가리키는 링크
+#   /usr/local/bin/csa               current/bin/csa를 가리키는 링크
 #   /etc/systemd/system/csa.service  current/csa.service의 사본
 #   /etc/callsignet/                 설정. 이 스크립트는 만들기만 하고 채우지 않는다
 #
@@ -47,8 +47,8 @@ need_root() { [ "$(id -u)" -eq 0 ] || die "root가 필요합니다: sudo $0 $*";
 # 이 묶음의 판이다. 실행 파일이 말하는 값을 쓴다. 파일 이름이나 디렉터리 이름을
 # 믿지 않는다.
 bundle_version() {
-  [ -x "$HERE/csa" ] || die "이 자리에 csa가 없습니다: $HERE"
-  "$HERE/csa" version
+  [ -x "$HERE/bin/csa" ] || die "이 자리에 bin/csa가 없습니다: $HERE"
+  "$HERE/bin/csa" version
 }
 
 # 링크가 가리키는 판이다. 링크가 없으면 빈 값이다.
@@ -68,8 +68,15 @@ place() { # 판
   install -d -m 755 "$VERSIONS"
   mkdir -p "$dir.tmp"
   cp -a "$HERE/." "$dir.tmp/"
-  chmod 0755 "$dir.tmp/csa"
+  chmod 0755 "$dir.tmp/bin/csa"
   mv "$dir.tmp" "$dir"
+  # SELinux가 있으면 문맥을 이 자리의 기본값으로 되돌린다. cp -a가 묶음을 푼
+  # 자리의 문맥을 그대로 가져오는데, 홈 디렉터리에서 풀었으면 그 문맥으로는
+  # systemd가 실행 파일을 띄우지 못한다. /opt/*/bin/ 아래는 기본 정책이 bin_t를
+  # 붙이므로 되돌리기만 하면 된다. SELinux가 없는 머신에는 이 명령이 없다.
+  if command -v restorecon >/dev/null 2>&1; then
+    restorecon -R "$dir"
+  fi
   say "판을 두었습니다: $dir"
 }
 
@@ -90,7 +97,7 @@ place_unit() {
 answers() {
   local i
   for i in $(seq 1 15); do
-    if "$CURRENT/csa" status -c "$CONF" >/dev/null 2>&1; then
+    if "$CURRENT/bin/csa" status -c "$CONF" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -106,7 +113,7 @@ do_install() {
   place "$ver"
   point "$CURRENT" "$VERSIONS/$ver"
   install -d -m 755 "$(dirname "$BIN")"
-  point "$BIN" "$CURRENT/csa"
+  point "$BIN" "$CURRENT/bin/csa"
   install -d -m 750 "$CONF"
   place_unit
   systemctl enable "$SERVICE" >/dev/null
@@ -129,7 +136,7 @@ do_upgrade() {
   # 새 판의 csa로 지금 설정을 먼저 본다. 설정 파일의 모양이 판마다 달라질 수
   # 있다. 여기서 걸리면 아무것도 바꾸지 않는다.
   if [ -f "$CONF/csa.toml" ]; then
-    if ! "$VERSIONS/$new/csa" check -c "$CONF"; then
+    if ! "$VERSIONS/$new/bin/csa" check -c "$CONF"; then
       die "새 판 $new 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다. 설정을 고치거나 판을 다시 고르십시오"
     fi
     say "새 판 $new 이(가) 지금 설정을 받습니다."

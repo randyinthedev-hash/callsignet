@@ -10,7 +10,7 @@
 
 | 파일 | 무엇 |
 |---|---|
-| `csa` | 정적으로 링크한 실행 파일 |
+| `bin/csa` | 정적으로 링크한 실행 파일 |
 | `csa.service` | systemd 서비스 파일 |
 | `install.sh` | 이 문서의 절차를 밟는 스크립트 |
 | `INSTALL.md` | 이 문서 |
@@ -28,10 +28,10 @@ cd csa-linux-amd64
 
 | 자리 | 무엇 | 임자와 권한 |
 |---|---|---|
-| `/opt/callsignet/versions/<판>/` | 묶음을 푼 그대로. 판마다 하나 | root, 0755 |
+| `/opt/callsignet/versions/<판>/` | 묶음을 푼 그대로. 판마다 하나. 실행 파일은 `bin/csa` | root, 0755 |
 | `/opt/callsignet/current` | 지금 도는 판을 가리키는 심볼릭 링크 | root |
 | `/opt/callsignet/previous` | 바로 앞 판을 가리키는 심볼릭 링크. 되돌릴 때 쓴다 | root |
-| `/usr/local/bin/csa` | `current/csa`를 가리키는 링크. 운영자가 `csa status`를 칠 때 쓴다 | root |
+| `/usr/local/bin/csa` | `current/bin/csa`를 가리키는 링크. 운영자가 `csa status`를 칠 때 쓴다 | root |
 | `/etc/systemd/system/csa.service` | `current/csa.service`의 사본 | root, 0644 |
 | `/etc/callsignet/` | 설정 셋과 키 | root, **0750** |
 | `/etc/callsignet/private.key` | 정적 개인키 | root, **0600** |
@@ -39,6 +39,8 @@ cd csa-linux-amd64
 | `/run/callsignet/` | `csa status`를 받는 소켓. systemd가 만들고 지운다 | root, 0755 |
 
 판마다 자기 디렉터리에 두고 링크 하나로 어느 판이 도는지 정한다. 올리는 것은 링크를 옮기는 것이고 되돌리는 것도 링크를 옮기는 것이다. 실행 파일을 덮어쓰는 순간이 없다.
+
+실행 파일이 `bin/` 아래에 있는 까닭은 SELinux다. RHEL 계열은 SELinux가 켜져 있고, systemd는 정책이 실행 파일로 아는 문맥(`bin_t`)의 파일만 띄운다. 기본 정책이 `/opt/*/bin/` 아래의 파일에 그 문맥을 붙이므로 정책을 따로 만들지 않아도 된다. `install.sh`는 판을 옮긴 뒤 `restorecon`으로 문맥을 그 자리의 기본값으로 되돌린다. 묶음을 홈 디렉터리에서 풀었으면 그 문맥이 딸려 오는데, 그것으로는 systemd가 띄우지 못한다.
 
 ## 서비스 계정과 권한
 
@@ -62,9 +64,9 @@ sudo ./install.sh install
 
 스크립트가 하는 일은 이렇다.
 
-1. `csa version`이 말하는 판으로 `/opt/callsignet/versions/<판>/`을 만들고 묶음을 그대로 옮긴다.
+1. `bin/csa version`이 말하는 판으로 `/opt/callsignet/versions/<판>/`을 만들고 묶음을 그대로 옮긴다. SELinux가 있으면 문맥을 되돌린다.
 2. `/opt/callsignet/current`가 그것을 가리키게 한다.
-3. `/usr/local/bin/csa`가 `current/csa`를 가리키게 한다.
+3. `/usr/local/bin/csa`가 `current/bin/csa`를 가리키게 한다.
 4. `/etc/callsignet/`을 0750으로 만든다. 채우지는 않는다.
 5. `csa.service`를 `/etc/systemd/system/`에 놓고 `systemctl enable csa`를 한다.
 
@@ -110,7 +112,7 @@ sudo ./install.sh upgrade
 스크립트가 하는 일은 이렇다.
 
 1. 새 판을 `/opt/callsignet/versions/<새 판>/`에 둔다. 지금 도는 판은 건드리지 않는다.
-2. **새 판의 csa로 지금 설정을 검사한다.** `versions/<새 판>/csa check -c /etc/callsignet`이다. 설정 파일의 모양이 판마다 달라질 수 있다. 여기서 걸리면 아무것도 바꾸지 않고 멈춘다.
+2. **새 판의 csa로 지금 설정을 검사한다.** `versions/<새 판>/bin/csa check -c /etc/callsignet`이다. 설정 파일의 모양이 판마다 달라질 수 있다. 여기서 걸리면 아무것도 바꾸지 않고 멈춘다.
 3. `previous`가 지금 판을, `current`가 새 판을 가리키게 한다. 서비스 파일도 새 판의 것으로 바꾼다.
 4. 서비스가 돌고 있으면 `systemctl restart csa`를 한다.
 5. **15초 안에 `csa status`가 답하는지 본다.** 답하면 끝이다.
