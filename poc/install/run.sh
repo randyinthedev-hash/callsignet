@@ -226,13 +226,17 @@ say() { # ok/틀림 머신 설명
 # 많고, 그때 설치된 파일의 임자가 그 사용자로 남으면 root로 도는 실행 파일을
 # 그 사용자가 고칠 수 있다.
 #
-# 뜨지 못하는 판을 셋 만든다. 실행 파일 자리에 판만 말하고 나머지는 지금 판의
+# 잘못된 판을 여럿 만든다. 실행 파일 자리에 판만 말하고 나머지는 지금 판의
 # csa에 넘기는 스크립트를 둔 것이다.
-#   crash    run이 바로 죽는다. 띄우기는 되지만 답하지 않는다
+#   flaky    /etc/callsignet/no-check 가 있으면 check가 거절하고,
+#            /etc/callsignet/no-run 이 있으면 run이 바로 죽는다
 #   nospawn  해석기가 /home 아래에 있다. 서비스 파일이 홈을 숨기므로 systemd가
 #            띄우지조차 못한다. systemctl restart 자체가 실패하는 자리다
-#   gate     /etc/callsignet/marker 가 있으면 check가 거절한다. 사전 검사가
-#            걸리는 자리와, 앞 판이 지금 설정을 거절하는 자리를 만든다
+#   lock     run이 /opt/callsignet 을 잠그고 죽는다. 돌아오는 것마저 막히는
+#            자리다. 그때 스크립트가 「반쯤」이라고 말하는지 본다
+#   badname  version이 빈 값이나 .. 이나 슬래시가 든 값을 찍는다
+#   unitdiff 진짜 csa인데 csa.service가 다르다. 서비스 파일을 쓰지 못하게
+#            잠가 두고 올리면 링크를 옮긴 뒤에 실패하는 자리가 된다
 walk() { # 이름 주소 peer-id 터널IP
   local name=$1 ip=$2 pid=$3 tip=$4
   local run="$SSH root@$ip"
@@ -331,98 +335,155 @@ walk() { # 이름 주소 peer-id 터널IP
     $run 'cat /root/rollback.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
 
-  # 뜨지 못하는 판을 만드는 도우미다. 판 이름과 스크립트 몸통을 받는다.
-  fake() { # 이름 판 몸통
+  # 잘못된 판을 만드는 도우미다. 이름과 스크립트 몸통을 받는다.
+  fake() { # 이름 몸통
     $SSH "root@$ip" "rm -rf /root/$1 && cp -a /home/inst/b/csa-linux-amd64 /root/$1 && cat > /root/$1/bin/csa <<'EOF'
-$3
+$2
 EOF
 chmod 755 /root/$1/bin/csa"
   }
-  fake crash "$VER_A-crash" "#!/bin/sh
+  fake flaky "#!/bin/sh
 case \"\$1\" in
-  version) echo $VER_A-crash ;;
-  run) echo '일부러 죽습니다' >&2; exit 1 ;;
+  version) echo $VER_A-flaky ;;
+  check) [ -e /etc/callsignet/no-check ] && { echo '일부러 거절합니다' >&2; exit 1; }; exec $A \"\$@\" ;;
+  run) [ -e /etc/callsignet/no-run ] && { echo '일부러 죽습니다' >&2; exit 1; }; exec $A \"\$@\" ;;
   *) exec $A \"\$@\" ;;
 esac"
   $run 'cp -L /bin/sh /home/inst/sh && chmod 755 /home/inst/sh'
-  fake nospawn "$VER_A-nospawn" "#!/home/inst/sh
+  fake nospawn "#!/home/inst/sh
 case \"\$1\" in
   version) echo $VER_A-nospawn ;;
   *) exec $A \"\$@\" ;;
 esac"
-  fake gate "$VER_A-gate" "#!/bin/sh
+  fake lock "#!/bin/sh
 case \"\$1\" in
-  version) echo $VER_A-gate ;;
-  check) if [ -e /etc/callsignet/marker ]; then echo '일부러 거절합니다' >&2; exit 1; fi; exec $A \"\$@\" ;;
+  version) echo $VER_A-lock ;;
+  run) chattr +i /opt/callsignet; echo '일부러 잠그고 죽습니다' >&2; exit 1 ;;
   *) exec $A \"\$@\" ;;
 esac"
 
   # 7. 떠서 바로 죽는 판으로 올린다. 올리기는 실패로 끝나야 하고, 끝난 뒤에는
-  #    앞 판이 돌고 있어야 한다.
-  if ! $run 'cd /root/crash && ./install.sh upgrade >/root/crash.log 2>&1' \
-     && [ "$(cur)" = "$VER_A" ] && answers; then
-    say ok "$name" "떠서 바로 죽는 판으로 올리면 스스로 앞 판으로 돌아온다"
+  #    링크 둘 다 시도하기 전 그대로여야 한다. 지금 판 A, 앞 판 B다.
+  $run 'touch /etc/callsignet/no-run'
+  if ! $run 'cd /root/flaky && ./install.sh upgrade >/root/flaky1.log 2>&1' \
+     && [ "$(cur)" = "$VER_A" ] && [ "$(prev)" = "$VER_B" ] && answers; then
+    say ok "$name" "떠서 바로 죽는 판으로 올리면 링크 둘 다 시도 전 그대로 돌아오고 csa가 답한다"
   else
-    say 틀림 "$name" "떠서 바로 죽는 판으로 올리면 스스로 앞 판으로 돌아온다"
-    $run 'cat /root/crash.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+    say 틀림 "$name" "떠서 바로 죽는 판으로 올리면 링크 둘 다 시도 전 그대로 돌아오고 csa가 답한다"
+    $run 'cat /root/flaky1.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
-  # 8. 그 판이 이제 앞 판이다. 거기로 되돌리기를 시도하면 검사는 지나지만 뜨지
-  #    못하므로, 원래 돌던 판으로 돌아와야 한다.
-  if [ "$(prev)" = "$VER_A-crash" ] && ! $run 'cd /root/crash && ./install.sh rollback >/root/rollback2.log 2>&1' \
-     && [ "$(cur)" = "$VER_A" ] && answers; then
-    say ok "$name" "앞 판이 뜨지 못하면 되돌리기가 원래 판으로 돌아온다"
-  else
-    say 틀림 "$name" "앞 판이 뜨지 못하면 되돌리기가 원래 판으로 돌아온다"
-    $run 'cat /root/rollback2.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
-  fi
+  $run 'rm -f /etc/callsignet/no-run'
 
-  # 9. systemd가 띄우지조차 못하는 판으로 올린다. systemctl restart가 실패하는
-  #    자리다. 그래도 앞 판으로 돌아와야 한다.
+  # 8. systemd가 띄우지조차 못하는 판으로 올린다. systemctl restart가 실패하는
+  #    자리다. 그래도 시도 전 그대로 돌아와야 한다.
   if ! $run 'cd /root/nospawn && ./install.sh upgrade >/root/nospawn.log 2>&1' \
-     && [ "$(cur)" = "$VER_A" ] && answers; then
-    say ok "$name" "다시 띄우기 자체가 실패해도 앞 판으로 돌아온다"
+     && [ "$(cur)" = "$VER_A" ] && [ "$(prev)" = "$VER_B" ] && answers; then
+    say ok "$name" "다시 띄우기 자체가 실패해도 시도 전 그대로 돌아온다"
   else
-    say 틀림 "$name" "다시 띄우기 자체가 실패해도 앞 판으로 돌아온다"
+    say 틀림 "$name" "다시 띄우기 자체가 실패해도 시도 전 그대로 돌아온다"
     $run 'cat /root/nospawn.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
 
-  # 10. 사전 검사에 걸리는 판. 두 번 시도해도 같은 까닭으로 막히고, 까닭을
-  #     치우면 같은 묶음으로 올라간다.
-  $run 'touch /etc/callsignet/marker'
-  if ! $run 'cd /root/gate && ./install.sh upgrade >/root/gate1.log 2>&1' \
-     && ! $run 'cd /root/gate && ./install.sh upgrade >/root/gate2.log 2>&1' \
-     && $run 'grep -q "받지 않습니다" /root/gate2.log' \
+  # 9. 사전 검사에 걸리는 판. 두 번 시도해도 같은 까닭으로 막히고, 까닭을
+  #    치우면 같은 묶음으로 올라간다.
+  $run 'touch /etc/callsignet/no-check'
+  if ! $run 'cd /root/flaky && ./install.sh upgrade >/root/flaky2.log 2>&1' \
+     && ! $run 'cd /root/flaky && ./install.sh upgrade >/root/flaky3.log 2>&1' \
+     && $run 'grep -q "받지 않습니다" /root/flaky3.log' \
      && [ "$(cur)" = "$VER_A" ] && answers; then
     say ok "$name" "사전 검사에 걸리면 아무것도 바꾸지 않고 같은 묶음으로 다시 시도할 수 있다"
   else
     say 틀림 "$name" "사전 검사에 걸리면 아무것도 바꾸지 않고 같은 묶음으로 다시 시도할 수 있다"
-    $run 'cat /root/gate1.log /root/gate2.log' | sed 's/^/        /'
+    $run 'cat /root/flaky2.log /root/flaky3.log' | sed 's/^/        /'
   fi
-  $run 'rm -f /etc/callsignet/marker'
-  if $run 'cd /root/gate && ./install.sh upgrade >/root/gate3.log 2>&1' \
-     && [ "$(cur)" = "$VER_A-gate" ] && answers; then
+  $run 'rm -f /etc/callsignet/no-check'
+  if $run 'cd /root/flaky && ./install.sh upgrade >/root/flaky4.log 2>&1' \
+     && [ "$(cur)" = "$VER_A-flaky" ] && answers; then
     say ok "$name" "까닭을 치우면 같은 묶음으로 올라간다"
   else
     say 틀림 "$name" "까닭을 치우면 같은 묶음으로 올라간다"
-    $run 'cat /root/gate3.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+    $run 'cat /root/flaky4.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
 
-  # 11. 앞 판이 지금 설정을 거절하면 되돌리기는 옮기기 전에 멈춘다. 지금 판은
-  #     gate이고 거기서 B로 올린 뒤 marker를 두면, 앞 판인 gate가 거절한다.
+  # 10. 앞 판이 지금 설정을 거절하면 되돌리기는 옮기기 전에 멈춘다. flaky에서
+  #     B로 올린 뒤 no-check 를 두면 앞 판인 flaky가 거절한다.
   $run 'cd /home/inst/b/csa-linux-amd64 && ./install.sh upgrade >/root/upgrade2.log 2>&1' || true
-  $run 'touch /etc/callsignet/marker'
-  if [ "$(cur)" = "$VER_B" ] && [ "$(prev)" = "$VER_A-gate" ] \
-     && ! $run 'cd /root/gate && ./install.sh rollback >/root/rollback3.log 2>&1' \
-     && $run 'grep -q "받지 않습니다" /root/rollback3.log' \
+  $run 'touch /etc/callsignet/no-check'
+  if [ "$(cur)" = "$VER_B" ] && [ "$(prev)" = "$VER_A-flaky" ] \
+     && ! $run 'cd /root/flaky && ./install.sh rollback >/root/rollback2.log 2>&1' \
+     && $run 'grep -q "받지 않습니다" /root/rollback2.log' \
      && [ "$(cur)" = "$VER_B" ] && answers; then
     say ok "$name" "앞 판이 지금 설정을 거절하면 되돌리기가 옮기기 전에 멈춘다"
   else
     say 틀림 "$name" "앞 판이 지금 설정을 거절하면 되돌리기가 옮기기 전에 멈춘다"
-    $run 'cat /root/upgrade2.log /root/rollback3.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+    $run 'cat /root/upgrade2.log /root/rollback2.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
   fi
-  $run 'rm -f /etc/callsignet/marker'
+  $run 'rm -f /etc/callsignet/no-check'
 
-  # 12. 지운다. 문서의 명령 그대로다.
+  # 11. 앞 판이 뜨지 못하면 되돌리기가 원래 판으로 돌아온다. 지금 판 B, 앞 판
+  #     flaky에서 no-run 을 두고 되돌린다. 검사는 지나지만 뜨지 못한다.
+  $run 'touch /etc/callsignet/no-run'
+  if ! $run 'cd /root/flaky && ./install.sh rollback >/root/rollback3.log 2>&1' \
+     && [ "$(cur)" = "$VER_B" ] && [ "$(prev)" = "$VER_A-flaky" ] && answers; then
+    say ok "$name" "앞 판이 뜨지 못하면 되돌리기가 원래 판으로 돌아온다"
+  else
+    say 틀림 "$name" "앞 판이 뜨지 못하면 되돌리기가 원래 판으로 돌아온다"
+    $run 'cat /root/rollback3.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+  fi
+  $run 'rm -f /etc/callsignet/no-run'
+
+  # 12. 판 이름으로 쓸 수 없는 값을 찍는 판. 어떤 디렉터리도 지우지 않고 거절한다.
+  local before after okname=1
+  before=$($run 'ls /opt/callsignet/versions | sort | tr "\n" " "')
+  for bad in '' '..' 'x/y' '.'; do
+    fake badname "#!/bin/sh
+case \"\$1\" in
+  version) echo '$bad' ;;
+  *) exec $A \"\$@\" ;;
+esac"
+    if $run 'cd /root/badname && ./install.sh upgrade >/root/badname.log 2>&1'; then okname=0; fi
+  done
+  after=$($run 'ls /opt/callsignet/versions | sort | tr "\n" " "')
+  if [ "$okname" = 1 ] && [ "$before" = "$after" ] && [ "$(cur)" = "$VER_B" ] && $run '[ -d /opt/callsignet/versions ] && [ -L /opt/callsignet/current ]' && answers; then
+    say ok "$name" "빈 값이나 ..이나 슬래시가 든 판 이름은 어떤 디렉터리도 지우지 않고 거절한다"
+  else
+    say 틀림 "$name" "빈 값이나 ..이나 슬래시가 든 판 이름은 어떤 디렉터리도 지우지 않고 거절한다"
+    echo "        앞: $before" ; echo "        뒤: $after"; $run 'cat /root/badname.log' | sed 's/^/        /'
+  fi
+
+  # 13. 링크를 옮긴 뒤에 서비스 파일을 쓰지 못하면 시도 전 그대로 돌아온다.
+  #     서비스 파일을 잠가 두고, 서비스 파일이 다른 진짜 판으로 올린다.
+  $run "rm -rf /root/unitdiff && cp -a /home/inst/a/csa-linux-amd64 /root/unitdiff && echo '# 시험용 한 줄' >> /root/unitdiff/csa.service && chattr +i /etc/systemd/system/csa.service"
+  if ! $run 'cd /root/unitdiff && ./install.sh upgrade >/root/unitdiff.log 2>&1' \
+     && $run 'grep -q "아무것도 바뀌지 않았습니다" /root/unitdiff.log' \
+     && [ "$(cur)" = "$VER_B" ] && [ "$(prev)" = "$VER_A-flaky" ] \
+     && $run 'cmp -s /opt/callsignet/current/csa.service /etc/systemd/system/csa.service' && answers; then
+    say ok "$name" "링크를 옮긴 뒤 서비스 파일을 쓰지 못해도 링크와 서비스 파일이 시도 전 그대로 돌아온다"
+  else
+    say 틀림 "$name" "링크를 옮긴 뒤 서비스 파일을 쓰지 못해도 링크와 서비스 파일이 시도 전 그대로 돌아온다"
+    $run 'cat /root/unitdiff.log; ./install.sh status 2>/dev/null' | sed 's/^/        /'
+  fi
+  $run 'chattr -i /etc/systemd/system/csa.service'
+
+  # 14. 돌아오는 것마저 막히면 「반쯤」이라고 말한다. 뜨면서 /opt/callsignet 을
+  #     잠그는 판으로 올린다. 그 뒤 서비스를 멈추고 잠금을 풀고 되돌리면 회복한다.
+  if ! $run 'cd /root/lock && ./install.sh upgrade >/root/lock.log 2>&1' \
+     && $run 'grep -q "반쯤" /root/lock.log && ! grep -q "돌아왔" /root/lock.log' \
+     && [ "$(cur)" = "$VER_A-lock" ]; then
+    say ok "$name" "돌아오지도 못하면 돌아왔다고 하지 않고 반쯤 옮겨진 상태라고 말한다"
+  else
+    say 틀림 "$name" "돌아오지도 못하면 돌아왔다고 하지 않고 반쯤 옮겨진 상태라고 말한다"
+    $run 'cat /root/lock.log' | sed 's/^/        /'
+  fi
+  if $run 'systemctl stop csa; chattr -i /opt/callsignet && cd /root/lock && ./install.sh rollback >/root/rollback4.log 2>&1 && systemctl start csa' \
+     && [ "$(cur)" = "$VER_B" ] && answers; then
+    say ok "$name" "서비스를 멈추고 까닭을 치운 뒤 되돌리면 회복한다"
+  else
+    say 틀림 "$name" "서비스를 멈추고 까닭을 치운 뒤 되돌리면 회복한다"
+    $run 'cat /root/rollback4.log; journalctl -u csa --no-pager | tail -20' | sed 's/^/        /'
+  fi
+
+  # 15. 지운다. 문서의 명령 그대로다.
   $run 'systemctl disable --now csa >/dev/null 2>&1; rm -f /etc/systemd/system/csa.service /usr/local/bin/csa; systemctl daemon-reload; rm -rf /opt/callsignet'
   if $run '! systemctl is-enabled csa >/dev/null 2>&1 && [ ! -e /usr/local/bin/csa ] && [ ! -e /opt/callsignet ] && [ -f /etc/callsignet/private.key ]'; then
     say ok "$name" "지우면 서비스와 링크와 판이 사라지고 설정은 남는다"
