@@ -21,7 +21,7 @@ import (
 // TestWriteSecret이미있으면만들지않는다는 쓰던 신원 키를 조용히 덮어쓰지 않게
 // 하려는 것이다.
 func TestWriteSecret이미있으면만들지않는다(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private.key")
+	path := filepath.Join(tempDir(t), "private.key")
 	if err := writeSecret(path, "첫 키\n", false); err != nil {
 		t.Fatalf("새로 만들지 못했다: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestWriteSecret이미있으면만들지않는다(t *testing.T) {
 // 있다고 찍는 일이 있었다. 옆에 새로 써서 옮기므로 옛 파일의 권한이 따라오지
 // 않는다.
 func TestWriteSecret덮어쓸때권한을바로잡는다(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "psk.key")
+	path := filepath.Join(tempDir(t), "psk.key")
 	if err := os.WriteFile(path, []byte("남이 만든 파일\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestWriteSecret덮어쓸때권한을바로잡는다(t *testing.T) {
 // TestWriteSecret바꾸다실패해도쓰던키를잃지않는다는 있던 파일을 먼저 비우지
 // 않기 때문이다. 옆에 온전히 써 두고 한 번에 옮긴다.
 func TestWriteSecret바꾸다실패해도쓰던키를잃지않는다(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	path := filepath.Join(dir, "psk.key")
 	if err := writeSecret(path, "쓰던 키\n", false); err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestWriteSecret바꾸다실패해도쓰던키를잃지않는다(t *testing.
 
 // TestWriteSecret새로만들때권한은 새로 만드는 자리도 0600인지 본다.
 func TestWriteSecret새로만들때권한(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "new.key")
+	path := filepath.Join(tempDir(t), "new.key")
 	if err := writeSecret(path, "키\n", false); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func keyPair(t *testing.T, fill byte) (priv, pub string) {
 // 설정 한 벌을 만든다. csa reload가 실제로 읽는 파일 셋이다.
 func configDir(t *testing.T) (dir string, writePSK func(fill byte)) {
 	t.Helper()
-	dir = t.TempDir()
+	dir = tempDir(t)
 	privA, pubA := keyPair(t, 1)
 	_, pubB := keyPair(t, 2)
 
@@ -341,4 +341,18 @@ func TestReload사전공유키를바꾸면다시건다(t *testing.T) {
 	if !strings.Contains(report, "바뀐 것이 없습니다") {
 		t.Fatalf("바뀐 것이 없다고 알리지 않았다: %q", report)
 	}
+}
+
+// tempDir는 비밀 파일을 둘 수 있는 임시 자리다. t.TempDir는 umask를 따르므로
+// umask가 002인 머신에서는 그룹이 쓸 수 있는 자리가 되고, 비밀 파일이 놓인
+// 자리를 보는 검사가 그것을 거절한다. 두 단계 모두 0755로 맞춘다.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, d := range []string{dir, filepath.Dir(dir)} {
+		if err := os.Chmod(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }

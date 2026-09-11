@@ -127,7 +127,7 @@ func TestDiffAllowsSelfServiceChange(t *testing.T) {
 // 사전 공유키는 TOML이 아니라 파일에 있다. csa.toml과 peers.toml과 policy.toml만
 // 견주면 운영자가 키를 갈아 끼운 것이 드러나지 않는다.
 func TestDiff사전공유키가바뀐것을찾는다(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	pskDir := filepath.Join(dir, "psk")
 	if err := os.Mkdir(pskDir, 0o700); err != nil {
 		t.Fatal(err)

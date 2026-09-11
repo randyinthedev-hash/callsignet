@@ -14,7 +14,7 @@ import (
 // 비밀 파일을 하나 만든다.
 func secretFile(t *testing.T, name, body string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
+	path := filepath.Join(tempDir(t), name)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestReadSecret심볼릭링크를따르지않는다(t *testing.T) {
 // 또는 남이 일부러 개인키 자리에 FIFO를 두면 csa나 csa check가 그 자리에서
 // 멈춘다. csa는 멈추지 않고 일반 파일이 아니라고 적고 나온다.
 func TestReadSecretFIFO에서멈추지않는다(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private.key")
+	path := filepath.Join(tempDir(t), "private.key")
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Skipf("이 머신에서 FIFO를 만들지 못했다: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestReadSecret너무큰파일을거절한다(t *testing.T) {
 // 앞서는 LoadPSK가 내용을 먼저 읽고 나서 파일의 종류와 권한을 보았다. 그래서
 // 그 검사에 닿기 전에 FIFO에서 멈출 수 있었다.
 func TestLoadPSK도같은검사를받는다(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	c := &Config{
 		Self:  Self{PeerID: "srv-a", PSK: PSK{Dir: dir, Mode: "required"}},
 		Peers: []Peer{{PeerID: "srv-b"}},
@@ -144,7 +144,7 @@ func TestSecrets파일을한번만읽는다(t *testing.T) {
 // 파일 자체가 0600이고 임자가 맞아도, 그 파일이 놓인 디렉터리를 남이 고칠 수
 // 있으면 그 사람이 파일을 통째로 갈아 끼울 수 있다.
 func TestReadSecret남이고칠수있는자리를거절한다(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "열린자리")
+	dir := filepath.Join(tempDir(t), "열린자리")
 	if err := os.Mkdir(dir, 0o777); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestReadSecret남이고칠수있는자리를거절한다(t *testing.T) {
 // O_NOFOLLOW는 경로의 마지막 조각만 지킨다. 가운데 조각이 링크면 csa는 그것을
 // 따라간다. 따라간 끝이 남이 고칠 수 있는 자리이면 거절해야 한다.
 func TestReadSecret상위디렉터리의링크도본다(t *testing.T) {
-	root := t.TempDir()
+	root := tempDir(t)
 	real := filepath.Join(root, "진짜")
 	if err := os.Mkdir(real, 0o777); err != nil {
 		t.Fatal(err)
@@ -210,7 +210,7 @@ func TestReadSecret상위디렉터리의링크도본다(t *testing.T) {
 // 못한다.
 func TestLoadPSK자리가아직없으면없는것으로본다(t *testing.T) {
 	c := &Config{
-		Self:  Self{PeerID: "srv-a", PSK: PSK{Dir: filepath.Join(t.TempDir(), "아직없다")}},
+		Self:  Self{PeerID: "srv-a", PSK: PSK{Dir: filepath.Join(tempDir(t), "아직없다")}},
 		Peers: []Peer{{PeerID: "srv-a"}, {PeerID: "srv-b"}},
 	}
 	key, ok, err := c.LoadPSK("srv-b")
@@ -220,4 +220,18 @@ func TestLoadPSK자리가아직없으면없는것으로본다(t *testing.T) {
 	if ok || key != "" {
 		t.Fatalf("없는 키를 있다고 했다: %q", key)
 	}
+}
+
+// tempDir는 비밀 파일을 둘 수 있는 임시 자리다. t.TempDir는 umask를 따르므로
+// umask가 002인 머신에서는 그룹이 쓸 수 있는 자리가 되고, 비밀 파일이 놓인
+// 자리를 보는 검사가 그것을 거절한다. 두 단계 모두 0755로 맞춘다.
+func tempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, d := range []string{dir, filepath.Dir(dir)} {
+		if err := os.Chmod(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }

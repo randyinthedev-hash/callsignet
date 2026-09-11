@@ -27,7 +27,7 @@ func good(t *testing.T) *Config {
 	t.Helper()
 	privA, pubA := keyPair(t, 1)
 	_, pubB := keyPair(t, 2)
-	key := filepath.Join(t.TempDir(), "private.key")
+	key := filepath.Join(tempDir(t), "private.key")
 	if err := os.WriteFile(key, []byte(privA+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestLoad모르는열쇠를거절한다(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
+			dir := tempDir(t)
 			for _, n := range []string{"csa.toml", "peers.toml", "policy.toml"} {
 				body := c.files[n]
 				if err := os.WriteFile(filepath.Join(dir, n), []byte(body), 0o644); err != nil {
@@ -197,7 +197,7 @@ func TestLoad모르는열쇠를거절한다(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	write := func(name, body string) {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -255,7 +255,7 @@ allow = ["srv-a"]
 // 않는 것과 같기 때문이다. 그런 파일을 받아들이면 psk.mode가 required인데도
 // 키 없이 세션이 서고 csa status는 키를 쓴다고 말한다.
 func TestLoadPSK전부0인키를거절한다(t *testing.T) {
-	dir := t.TempDir()
+	dir := tempDir(t)
 	c := &Config{
 		Self:  Self{PeerID: "srv-a", PSK: PSK{Dir: dir, Mode: "required"}},
 		Peers: []Peer{{PeerID: "srv-b"}},
