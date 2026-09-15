@@ -87,11 +87,13 @@ jobs:
           done
           cd dist/out && sha256sum *.tar.gz > sha256sum.txt && cat sha256sum.txt
 
+      # 기술 프리뷰인 동안은 pre-release로 표시한다. 안정판처럼 보이지 않게
+      # 하려는 것이다. 이 표시를 떼는 것은 릴리스 노트가 그렇게 말하는 판부터다.
       - name: 릴리스를 만든다
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" --prerelease \
             --notes "무엇을 만들었는지는 [릴리스 노트](RELEASE_NOTES.md)에 있습니다. 묶음마다 정적으로 링크한 리눅스 바이너리와 systemd 서비스 파일과 설치 스크립트와 라이선스가 함께 들어 있습니다. 설치하는 방법은 묶음 안의 INSTALL.md에 있습니다." \
             dist/out/*.tar.gz dist/out/sha256sum.txt LICENSE THIRD-PARTY-NOTICES.md
