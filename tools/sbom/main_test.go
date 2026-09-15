@@ -229,6 +229,27 @@ func TestVerify는고친파일과이상한항목을잡는다(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "위험한 경로") && !strings.Contains(err.Error(), "맨 위 디렉터리") {
 		t.Fatalf("위로 나가는 경로를 잡지 못했다: %v", err)
 	}
+	// 정리하면 지나가는 경로. a/../sbom.spdx.json 은 정리하면 sbom.spdx.json 이다.
+	err = runVerify(args(s, "-tar", pack(t, dir, func(tw *tar.Writer) {
+		tw.WriteHeader(&tar.Header{Name: "hello-linux-amd64/a/../sbom.spdx.json", Typeflag: tar.TypeReg, Size: 0})
+	})))
+	if err == nil || !strings.Contains(err.Error(), "위험한 경로") {
+		t.Fatalf("정리하면 지나가는 경로를 잡지 못했다: %v", err)
+	}
+	err = runVerify(args(s, "-tar", pack(t, dir, func(tw *tar.Writer) {
+		tw.WriteHeader(&tar.Header{Name: "hello-linux-amd64/./LICENSE", Typeflag: tar.TypeReg, Size: 0})
+	})))
+	if err == nil || !strings.Contains(err.Error(), "위험한 경로") {
+		t.Fatalf(". 조각을 잡지 못했다: %v", err)
+	}
+	// 같은 이름이 둘
+	err = runVerify(args(s, "-tar", pack(t, dir, func(tw *tar.Writer) {
+		tw.WriteHeader(&tar.Header{Name: "hello-linux-amd64/sbom.spdx.json", Typeflag: tar.TypeReg, Size: 2})
+		tw.Write([]byte("{}"))
+	})))
+	if err == nil || !strings.Contains(err.Error(), "같은 이름이 둘") {
+		t.Fatalf("같은 이름 둘을 잡지 못했다: %v", err)
+	}
 	// SBOM에 없는 파일이 더 들어 있다.
 	err = runVerify(args(s, "-tar", pack(t, dir, func(tw *tar.Writer) {
 		tw.WriteHeader(&tar.Header{Name: "hello-linux-amd64/extra", Typeflag: tar.TypeReg, Size: 0})

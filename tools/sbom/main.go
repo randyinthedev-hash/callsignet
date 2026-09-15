@@ -210,8 +210,10 @@ func readDir(dir string) ([]entry, error) {
 }
 
 // readTar는 묶음 tar.gz를 풀지 않고 읽는다. 맨 위 디렉터리 하나가 묶음 이름이어야
-// 하고, 그 아래에는 디렉터리와 일반 파일만 있어야 한다. 절대 경로와 ..과 심볼릭
-// 링크와 하드 링크와 장치 파일과 FIFO는 거절한다.
+// 하고, 그 아래에는 디렉터리와 일반 파일만 있어야 한다. 절대 경로와 .과 ..과
+// 심볼릭 링크와 하드 링크와 장치 파일과 FIFO는 거절한다. 경로는 정리하기 전의
+// 조각을 본다. a/../x 같은 경로는 정리하면 x가 되어 지나가는데, 그것을 받으면
+// 같은 이름의 파일이 둘이 될 수 있다. 정리한 이름이 겹치는 것도 거절한다.
 func readTar(name, bundle string) ([]entry, error) {
 	f, err := os.Open(name)
 	if err != nil {
@@ -224,6 +226,7 @@ func readTar(name, bundle string) ([]entry, error) {
 	}
 	tr := tar.NewReader(gz)
 	var out []entry
+	seen := map[string]bool{}
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -232,10 +235,14 @@ func readTar(name, bundle string) ([]entry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tar를 읽지 못했다: %w", err)
 		}
-		clean := path.Clean(h.Name)
-		if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") || strings.Contains(h.Name, "\\") {
-			return nil, fmt.Errorf("묶음에 위험한 경로가 있다: %q", h.Name)
+		if err := safeName(h.Name); err != nil {
+			return nil, err
 		}
+		clean := path.Clean(h.Name)
+		if seen[clean] {
+			return nil, fmt.Errorf("묶음에 같은 이름이 둘 있다: %q", clean)
+		}
+		seen[clean] = true
 		first := strings.SplitN(clean, "/", 2)[0]
 		if first != bundle {
 			return nil, fmt.Errorf("묶음의 맨 위 디렉터리가 %s이 아니다: %q", bundle, h.Name)
@@ -263,6 +270,21 @@ func readTar(name, bundle string) ([]entry, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out, nil
+}
+
+// safeName은 tar 항목의 이름을 정리하기 전에 본다. 절대 경로, 빈 조각, .과 ..
+// 조각, 역슬래시를 거절한다. 끝의 슬래시(디렉터리)는 괜찮다.
+func safeName(name string) error {
+	if name == "" || strings.HasPrefix(name, "/") || strings.Contains(name, "\\") {
+		return fmt.Errorf("묶음에 위험한 경로가 있다: %q", name)
+	}
+	for _, part := range strings.Split(strings.TrimSuffix(name, "/"), "/") {
+		switch part {
+		case "", ".", "..":
+			return fmt.Errorf("묶음에 위험한 경로가 있다: %q", name)
+		}
+	}
+	return nil
 }
 
 func find(entries []entry, name string) (entry, bool) {

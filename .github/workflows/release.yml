@@ -143,14 +143,15 @@ jobs:
             -program csa -arch ${{ matrix.arch }} -version "${{ steps.ref.outputs.version }}" \
             -commit "${{ github.sha }}" -repo "$REPO" -license Apache-2.0
 
+      # actions/attest는 predicate를 주지 않으면 SLSA 출처 증명을 만들고, sbom-path를
+      # 주면 SBOM 증명을 만든다. attest-build-provenance와 attest-sbom은 이것을
+      # 감싼 것이고 새로 만드는 것은 attest를 쓰라고 한다.
       - name: 출처 증명을 만든다
         id: prov
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/out/csa-linux-${{ matrix.arch }}.tar.gz
 
-      # actions/attest-sbom은 더 이상 쓰지 않는다고 한다. 같은 일을 actions/attest의
-      # sbom-path가 한다.
       - name: SBOM 증명을 만든다
         id: sbom
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
@@ -221,6 +222,10 @@ jobs:
           if-no-files-found: error
 
   # 릴리스를 만든다. 예행 실행에서는 돌지 않는다.
+  #
+  # 검증한 바이트와 발행하는 바이트가 같아야 한다. 아티팩트로 오간 파일이 증명의
+  # 대상과 같은지를 download-artifact는 경고로만 말하므로, 여기서 고정한 gh로
+  # 실제 발행할 파일을 다시 검증한다. 하나라도 실패하면 릴리스를 만들지 않는다.
   publish:
     name: 릴리스를 만든다
     needs: build
@@ -230,18 +235,59 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist/out
           merge-multiple: true
 
-      # 체크섬은 묶음에 대해 만든다. 받는 쪽이 실제로 내려받는 것이 묶음이다.
-      # 체크섬은 증명을 대신하지 못한다. 같은 자리에서 내려받기 때문이다.
+      - name: gh를 정확한 판으로 설치한다
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL -o gh.tar.gz "https://github.com/cli/cli/releases/download/v$GH_VERSION/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          echo "$GH_SHA256  gh.tar.gz" | sha256sum -c --quiet
+          tar -xzf gh.tar.gz
+          mkdir -p "$HOME/.local/bin" && mv "gh_${GH_VERSION}_linux_amd64/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gh" --version
+
+      # 자산의 수가 정확해야 한다. 아키텍처 둘에 묶음과 SBOM 사본과 증명 묶음이 하나씩이다.
+      - name: 자산의 수를 본다
+        run: |
+          cd dist/out
+          ls -la
+          for pat in '*.tar.gz' '*.spdx.json' '*.attestations.jsonl'; do
+            n=$(ls $pat | wc -l)
+            if [ "$n" != 2 ]; then echo "$pat 가 둘이 아닙니다: $n" >&2; exit 1; fi
+          done
+
+      # 실제 발행할 파일을 설치 문서의 명령 그대로 다시 검증한다. 온라인으로
+      # predicate 둘 다, 그리고 함께 붙이는 증명 묶음으로도 본다.
+      - name: 발행할 파일을 다시 검증한다
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          common=(-R "$REPO" --signer-workflow "$REPO/.github/workflows/release.yml"
+                  --source-ref "$GITHUB_REF" --source-digest "${{ github.sha }}"
+                  --deny-self-hosted-runners)
+          for f in dist/out/*.tar.gz; do
+            gh attestation verify "$f" "${common[@]}" --format json | jq -r --arg f "$f" '.[] | [$f, .verificationResult.statement.predicateType, .verificationResult.signature.certificate.sourceRepositoryRef, .verificationResult.signature.certificate.sourceRepositoryDigest] | join("  ")'
+            gh attestation verify "$f" "${common[@]}" --predicate-type https://spdx.dev/Document/v2.3 --format json | jq -r --arg f "$f" '.[] | [$f, .verificationResult.statement.predicateType] | join("  ")'
+            gh attestation verify "$f" "${common[@]}" --bundle "$f.attestations.jsonl" >/dev/null
+            gh attestation verify "$f" "${common[@]}" --bundle "$f.attestations.jsonl" --predicate-type https://spdx.dev/Document/v2.3 >/dev/null
+            go run ./tools/sbom verify -tar "$f" -copy "${f%.tar.gz}.spdx.json" \
+              -program csa -arch "$(basename "$f" .tar.gz | sed 's/^csa-linux-//')" \
+              -version "${GITHUB_REF_NAME#v}" -commit "${{ github.sha }}" -repo "$REPO" -license Apache-2.0
+          done
+
+      # 체크섬은 다시 검증한 그 파일에 대해 만든다. 받는 쪽이 실제로 내려받는 것이
+      # 묶음이다. 체크섬은 증명을 대신하지 못한다. 같은 자리에서 내려받기 때문이다.
       - name: 체크섬을 만든다
         run: |
           cd dist/out
           sha256sum *.tar.gz > sha256sum.txt
-          ls -la
           cat sha256sum.txt
 
       # 기술 프리뷰인 동안은 pre-release로 표시한다. 본문의 커밋 해시는 편의를

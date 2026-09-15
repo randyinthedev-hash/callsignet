@@ -15,7 +15,7 @@
 | `install.sh` | 이 문서의 절차를 밟는 스크립트 |
 | `INSTALL.md` | 이 문서 |
 | `LICENSE`, `THIRD-PARTY-NOTICES.md` | 라이선스 |
-| `sbom.spdx.json` | 이 묶음의 부품 목록. SPDX 2.3이다. 묶음의 모든 파일과 실행 파일에 들어간 Go 모듈을 적는다 |
+| `sbom.spdx.json` | 이 묶음의 부품 목록. SPDX 2.3이다. 자기 자신을 뺀 묶음의 모든 일반 파일과 실행 파일에 들어간 Go 모듈을 적는다 |
 
 릴리스에는 묶음 곁에 `sha256sum.txt`와 부품 목록의 사본(`csa-linux-<아키텍처>.spdx.json`)과 증명 묶음(`csa-linux-<아키텍처>.tar.gz.attestations.jsonl`)이 더 붙어 있다.
 
@@ -59,7 +59,18 @@ gh attestation verify csa-linux-amd64.tar.gz \
   --source-ref refs/tags/v0.1.6 \
   --source-digest <태그가 가리키는 커밋> \
   --deny-self-hosted-runners
+gh attestation verify csa-linux-amd64.tar.gz \
+  --bundle csa-linux-amd64.tar.gz.attestations.jsonl \
+  --custom-trusted-root trusted-root.jsonl \
+  -R randyinthedev-hash/callsignet \
+  --signer-workflow randyinthedev-hash/callsignet/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.6 \
+  --source-digest <태그가 가리키는 커밋> \
+  --deny-self-hosted-runners \
+  --predicate-type https://spdx.dev/Document/v2.3
 ```
+
+첫째가 출처 증명, 둘째가 부품 목록 증명이다.
 
 부품 목록의 권위 있는 사본은 묶음 안의 `sbom.spdx.json`과 증명 안의 predicate다. 릴리스에 따로 붙은 `.spdx.json`은 열람 편의용이고 묶음 안의 것과 바이트가 같다.
 
