@@ -76,7 +76,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # 작업 나무 밖에서 한다. 작업 나무에 파일이 하나라도 더 생기면 go가
+      # buildinfo에 vcs.modified를 참으로 찍고 뒤의 검사가 걸린다.
       - name: gh를 정확한 판으로 설치한다
+        working-directory: ${{ runner.temp }}
         run: |
           curl -fsSL -o gh.tar.gz "https://github.com/cli/cli/releases/download/v$GH_VERSION/gh_${GH_VERSION}_linux_amd64.tar.gz"
           echo "$GH_SHA256  gh.tar.gz" | sha256sum -c --quiet
@@ -105,15 +108,24 @@ jobs:
       # govulncheck가 바이너리에서 어느 함수를 부르는지 보지 못한다. 받는 사람이
       # 붙인 바이너리를 스스로 재는 길을 막지 않는다. 작업 나무를 고치지 않으므로
       # buildinfo에 vcs.revision이 이 커밋으로, vcs.modified가 false로 찍힌다.
+      # 만드는 자리 dist/out은 .gitignore에 있다. 추적하지 않는 파일도 go에는
+      # 고친 것으로 보이므로, 작업 나무 안에는 무시되는 자리에만 쓴다.
+      - name: 작업 나무가 깨끗한지 본다
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "작업 나무가 깨끗하지 않습니다. buildinfo에 vcs.modified가 참으로 찍힙니다." >&2
+            git status --porcelain >&2
+            exit 1
+          fi
       - name: csa를 만든다
         run: |
-          mkdir -p dist/build
+          mkdir -p dist/out
           CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} \
-            go build -trimpath -ldflags "-w" -o dist/build/csa ./cmd/csa
+            go build -trimpath -ldflags "-w" -o dist/out/csa ./cmd/csa
 
       # 소스를 잰 것과 붙이는 것이 같다는 보장은 없다. 붙일 바이너리를 그대로 잰다.
       - name: 붙일 바이너리를 잰다
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode=binary ./dist/build/csa
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 -mode=binary ./dist/out/csa
 
       # 묶음을 만든다. SBOM을 만들며 buildinfo를 검사하고, 독립 검사를 지나야 tar가 된다.
       - name: 묶음과 SBOM을 만든다
@@ -122,7 +134,7 @@ jobs:
           PACK_COMMIT: ${{ github.sha }}
           PACK_REPO: ${{ github.repository }}
           PACK_HOOK: tools/sbom/check-independent.sh
-        run: dist/pack.sh dist/build/csa ${{ matrix.arch }} dist/out
+        run: dist/pack.sh dist/out/csa ${{ matrix.arch }} dist/out
 
       - name: 묶음을 검사한다
         run: |
