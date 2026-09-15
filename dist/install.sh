@@ -142,15 +142,20 @@ unplace() { # 판
   local dir="$VERSIONS/$1" failed
   if [ -n "$OLD" ]; then
     failed=$(mktemp -d "$VERSIONS/.failed.XXXXXX") || { say "옛 판을 제자리로 돌리지 못했습니다. 옛 판은 $OLD 에 있습니다." >&2; return 1; }
-    if mv -T "$dir" "$failed" && mv -T "$OLD" "$dir"; then
-      rm -rf "$failed"
-      OLD=""
-      return 0
+    if ! mv -T "$dir" "$failed"; then
+      rmdir "$failed" 2>/dev/null || true
+      UNDONE="새 판이 $dir 에 그대로 있고 옛 판은 $OLD 에 있습니다. $dir 은(는) 옛 판이 아닙니다."
+      return 1
     fi
-    say "옛 판을 제자리로 돌리지 못했습니다. 옛 판은 $OLD 에, 새 판은 $failed 에 있습니다. 손으로 맞추십시오." >&2
-    return 1
+    if ! mv -T "$OLD" "$dir"; then
+      UNDONE="$dir 이(가) 비어 있습니다. 옛 판은 $OLD 에, 새 판은 $failed 에 있습니다."
+      return 1
+    fi
+    rm -rf "$failed"
+    OLD=""
+    return 0
   fi
-  rm -rf "$dir"
+  rm -rf "$dir" || { UNDONE="새 판을 치우지 못했습니다: $dir"; return 1; }
 }
 
 # 링크를 바꾼다. 옆에 만들어 한 번에 옮기므로 링크가 없는 순간이 없다.
@@ -244,22 +249,44 @@ mixed() { # 무엇  마지막으로 돌던 판
 #   5. 돌아오지도 못하면 반쯤 옮겨진 상태라고 말한다.
 #
 # 시도 전으로 돌아오는 자리마다 UNDO를 부른다. 올리기는 여기에 새로 둔 판을
-# 치우고 밀어 둔 사본을 되돌리는 일을 건다. 되돌리기는 걸 것이 없다.
+# 치우고 밀어 둔 사본을 되돌리는 일을 건다. 되돌리기는 걸 것이 없다. 그 일이
+# 실패하면 「돌아왔다」고 하지 않는다. 링크와 서비스는 돌아왔어도 판 디렉터리가
+# 돌아오지 못한 것이고, 그 상태로 rollback 하면 옛 판이 아닌 것으로 되돌아간다.
 UNDO=""
-undo() { [ -n "$UNDO" ] && $UNDO; true; }
+UNDONE=""
+undo() {
+  [ -n "$UNDO" ] || return 0
+  $UNDO
+}
+
+# fail은 시도 전으로 돌아온 뒤에 실패를 말한다. 첫째 인자는 무엇이 실패했는지,
+# 둘째 인자는 온전히 돌아왔을 때만 덧붙일 말이다. 새로 둔 판을 치우는 것까지
+# 되어야 둘째 인자를 말한다. 그것이 안 되면 무엇이 어디 있는지 적고 2로 끝난다.
+fail() { # 실패한 것  온전히 돌아왔을 때의 말
+  if undo; then
+    die "$1${2:+ $2}"
+  fi
+  {
+    echo "오류: $1"
+    echo "  링크와 서비스는 시도 전으로 돌아왔지만 판 디렉터리는 돌아오지 못했습니다. $UNDONE"
+    echo "  current  → $(readlink "$CURRENT" 2>/dev/null || echo 없음)"
+    echo "  previous → $(readlink "$PREVIOUS" 2>/dev/null || echo 없음)"
+    echo "  previous가 가리키는 자리가 옛 판이 아니거나 비어 있습니다. 옛 판을 그 자리에 되돌리기 전에는 rollback 하지 마십시오."
+    echo "  $0 status 를 보십시오."
+  } >&2
+  exit 2
+}
 move() { # 옮겨 갈 판  지금 판  무엇을 하는 것인지(올리기/되돌리기)
   local to=$1 from=$2 what=$3 oldprev
   oldprev=$(linked_version "$PREVIOUS")
   if ! accepts_config "$to"; then
-    undo
-    die "$what: 판 $to 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다."
+    fail "$what: 판 $to 이(가) 지금 설정을 받지 않습니다." "아무것도 바꾸지 않았습니다."
   fi
 
   if ! set_state "$to" "$from"; then
     say "링크나 서비스 파일을 옮기다 실패했습니다. 시도 전 그대로 돌아옵니다." >&2
     set_state "$from" "$oldprev" || mixed "$what" "$from"
-    undo
-    die "$what 실패. 링크나 서비스 파일을 옮기지 못했습니다. 시도 전 그대로 돌아왔고 아무것도 바뀌지 않았습니다."
+    fail "$what 실패. 링크나 서비스 파일을 옮기지 못했습니다." "시도 전 그대로 돌아왔고 아무것도 바뀌지 않았습니다."
   fi
   say "링크를 옮겼습니다. $from → $to"
 
@@ -278,11 +305,9 @@ move() { # 옮겨 갈 판  지금 판  무엇을 하는 것인지(올리기/되�
   say "판 $to 이(가) 뜨지 않거나 답하지 않습니다. 판 $from 으로 돌아옵니다." >&2
   set_state "$from" "$oldprev" || mixed "$what" "$from"
   if restarted_and_answers; then
-    undo
-    die "$what 실패. 판 $from 으로 돌아왔고 그것이 답합니다. 판 $to 은(는) 뜨지 못했습니다. journalctl -u $SERVICE 를 보십시오"
+    fail "$what 실패. 판 $to 은(는) 뜨지 못했습니다. journalctl -u $SERVICE 를 보십시오." "판 $from 으로 돌아왔고 그것이 답합니다."
   fi
-  undo
-  die "$what 실패. 판 $from 으로 돌아왔는데 그것도 답하지 않습니다. journalctl -u $SERVICE 를 보십시오"
+  fail "$what 실패. 판 $to 은(는) 뜨지 못했고 판 $from 으로 돌아왔는데 그것도 답하지 않습니다. journalctl -u $SERVICE 를 보십시오." ""
 }
 
 # 처음 설치에서 판을 둔 뒤에 하는 걸음이다. 어느 걸음이든 실패하면 0이 아닌
@@ -365,8 +390,7 @@ do_upgrade() {
   # 같은 이름의 판이 있었으면 그것을 제자리로 되돌린다. 앞 판이 그것일 수 있다.
   UNDO="unplace $new"
   if ! accepts_config "$new"; then
-    undo
-    die "올리기: 새 판 $new 이(가) 지금 설정을 받지 않습니다. 아무것도 바꾸지 않았습니다. 설정을 고치거나 판을 다시 고르십시오"
+    fail "올리기: 새 판 $new 이(가) 지금 설정을 받지 않습니다." "아무것도 바꾸지 않았습니다. 설정을 고치거나 판을 다시 고르십시오."
   fi
   say "새 판 $new 이(가) 지금 설정을 받습니다."
   move "$new" "$old" "올리기"

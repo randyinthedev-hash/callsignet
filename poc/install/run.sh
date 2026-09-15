@@ -418,6 +418,33 @@ esac"
     say 틀림 "$name" "앞 판의 이름을 단 묶음이 뜨지 못하면 시도 전으로 돌아오고 앞 판의 원본이 그대로 남는다"
     $run "cat /root/asb-run.log; ls -la /opt/callsignet/versions; sha256sum /opt/callsignet/versions/$VER_B/bin/csa; journalctl -u csa --no-pager | tail -10" | sed 's/^/        /'
   fi
+  # 돌아오는 것 자체가 실패하는 자리다. 앞 판의 이름을 단 묶음이 검사에서 밀어
+  # 둔 옛 사본을 잠그고 거절한다. 스크립트는 돌아왔다고 하지 않고 무엇이 어디
+  # 있는지 적어야 한다. 잠금을 풀고 옛 사본을 제자리에 두면 회복한다.
+  fake asb-stuck "#!/bin/sh
+case \"\$1\" in
+  version) echo $VER_B ;;
+  check) chattr +i /opt/callsignet/versions/.old.*; echo '일부러 거절합니다' >&2; exit 1 ;;
+  *) exec $A \"\$@\" ;;
+esac"
+  $run 'cd /root/asb-stuck && ./install.sh upgrade >/root/asb-stuck.log 2>&1; echo $? > /root/asb-stuck.rc'
+  if [ "$($run 'cat /root/asb-stuck.rc')" = 2 ] \
+     && $run 'grep -q "돌아오지 못했습니다" /root/asb-stuck.log && ! grep -q "아무것도 바꾸지 않았습니다" /root/asb-stuck.log && ! grep -q "그대로 돌아왔" /root/asb-stuck.log' \
+     && [ "$(cur)" = "$VER_A" ] && answers; then
+    say ok "$name" "옛 사본을 제자리로 돌리지 못하면 돌아왔다고 하지 않고 무엇이 어디 있는지 말한다"
+  else
+    say 틀림 "$name" "옛 사본을 제자리로 돌리지 못하면 돌아왔다고 하지 않고 무엇이 어디 있는지 말한다"
+    $run 'cat /root/asb-stuck.rc /root/asb-stuck.log; ls -la /opt/callsignet/versions' | sed 's/^/        /'
+  fi
+  if $run "chattr -i /opt/callsignet/versions/.old.* && mv -T /opt/callsignet/versions/.old.* /opt/callsignet/versions/$VER_B && rm -rf /opt/callsignet/versions/.failed.*" \
+     && [ "$($run "sha256sum /opt/callsignet/versions/$VER_B/bin/csa | cut -d' ' -f1")" = "$bsum" ] \
+     && [ "$(cur)" = "$VER_A" ] && [ "$(prev)" = "$VER_B" ] && answers; then
+    say ok "$name" "옛 사본을 제자리에 두면 앞 판이 원본으로 돌아온다"
+  else
+    say 틀림 "$name" "옛 사본을 제자리에 두면 앞 판이 원본으로 돌아온다"
+    $run 'ls -la /opt/callsignet/versions' | sed 's/^/        /'
+  fi
+
   fake flaky "#!/bin/sh
 case \"\$1\" in
   version) echo $VER_A-flaky ;;
