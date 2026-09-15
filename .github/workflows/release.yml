@@ -70,6 +70,10 @@ jobs:
       fail-fast: true
       matrix:
         arch: [amd64, arm64]
+    # 릴리스를 만드는 작업이 같은 판과 참조로 다시 검증한다. 행렬의 두 작업이 같은 값을 쓴다.
+    outputs:
+      version: ${{ steps.ref.outputs.version }}
+      ref: ${{ steps.ref.outputs.ref }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -221,7 +225,8 @@ jobs:
             dist/out/csa-linux-${{ matrix.arch }}.tar.gz.attestations.jsonl
           if-no-files-found: error
 
-  # 릴리스를 만든다. 예행 실행에서는 돌지 않는다.
+  # 릴리스를 만든다. 예행 실행에서는 마지막 걸음만 빼고 모두 돈다. 다시 검증하는
+  # 길도 예행에서 밟혀야 한다.
   #
   # 검증한 바이트와 발행하는 바이트가 같아야 한다. 아티팩트로 오간 파일이 증명의
   # 대상과 같은지를 download-artifact는 경고로만 말하므로, 여기서 고정한 gh로
@@ -229,7 +234,6 @@ jobs:
   publish:
     name: 릴리스를 만든다
     needs: build
-    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -270,7 +274,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           common=(-R "$REPO" --signer-workflow "$REPO/.github/workflows/release.yml"
-                  --source-ref "$GITHUB_REF" --source-digest "${{ github.sha }}"
+                  --source-ref "${{ needs.build.outputs.ref }}" --source-digest "${{ github.sha }}"
                   --deny-self-hosted-runners)
           for f in dist/out/*.tar.gz; do
             gh attestation verify "$f" "${common[@]}" --format json | jq -r --arg f "$f" '.[] | [$f, .verificationResult.statement.predicateType, .verificationResult.signature.certificate.sourceRepositoryRef, .verificationResult.signature.certificate.sourceRepositoryDigest] | join("  ")'
@@ -279,7 +283,7 @@ jobs:
             gh attestation verify "$f" "${common[@]}" --bundle "$f.attestations.jsonl" --predicate-type https://spdx.dev/Document/v2.3 >/dev/null
             go run ./tools/sbom verify -tar "$f" -copy "${f%.tar.gz}.spdx.json" \
               -program csa -arch "$(basename "$f" .tar.gz | sed 's/^csa-linux-//')" \
-              -version "${GITHUB_REF_NAME#v}" -commit "${{ github.sha }}" -repo "$REPO" -license Apache-2.0
+              -version "${{ needs.build.outputs.version }}" -commit "${{ github.sha }}" -repo "$REPO" -license Apache-2.0
           done
 
       # 체크섬은 다시 검증한 그 파일에 대해 만든다. 받는 쪽이 실제로 내려받는 것이
@@ -293,6 +297,7 @@ jobs:
       # 기술 프리뷰인 동안은 pre-release로 표시한다. 본문의 커밋 해시는 편의를
       # 위한 값이다. 본문은 고칠 수 있으므로 독립적인 근거가 아니다.
       - name: 릴리스를 만든다
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
