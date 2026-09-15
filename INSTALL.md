@@ -15,12 +15,57 @@
 | `install.sh` | 이 문서의 절차를 밟는 스크립트 |
 | `INSTALL.md` | 이 문서 |
 | `LICENSE`, `THIRD-PARTY-NOTICES.md` | 라이선스 |
+| `sbom.spdx.json` | 이 묶음의 부품 목록. SPDX 2.3이다. 묶음의 모든 파일과 실행 파일에 들어간 Go 모듈을 적는다 |
 
-받은 묶음은 `sha256sum.txt`로 먼저 확인한다.
+릴리스에는 묶음 곁에 `sha256sum.txt`와 부품 목록의 사본(`csa-linux-<아키텍처>.spdx.json`)과 증명 묶음(`csa-linux-<아키텍처>.tar.gz.attestations.jsonl`)이 더 붙어 있다.
+
+## 받은 묶음을 확인하기
+
+받은 묶음이 이 리포의 그 태그에서 GitHub Actions가 만든 것인지 확인한다. 이 확인이 없으면 받은 파일이 누가 만든 것인지 알 수 없다. `sha256sum.txt`는 전송 중에 깨진 것을 잡을 뿐 위조를 막지 못한다. 같은 자리에서 내려받기 때문이다.
+
+증명은 GitHub의 아티팩트 증명이다. 태그 워크플로가 묶음마다 출처 증명(SLSA v1.0)과 부품 목록 증명(SPDX 2.3)을 만들어 GitHub에 두었고, `gh attestation verify`가 그것을 받아 확인한다. **`gh`는 2.97.0 이상이어야 한다.** 그 앞 판에는 워크플로 검증을 우회하는 결함이 있다. 확인은 `gh auth login`이나 `GH_TOKEN`을 요구한다.
 
 ```bash
-sha256sum -c --ignore-missing sha256sum.txt
+gh --version                                   # 2.97.0 이상
+sha256sum -c --ignore-missing sha256sum.txt    # 전송 중에 깨지지 않았는지
+gh attestation verify csa-linux-amd64.tar.gz \
+  -R randyinthedev-hash/callsignet \
+  --signer-workflow randyinthedev-hash/callsignet/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.6 \
+  --source-digest <태그가 가리키는 커밋> \
+  --deny-self-hosted-runners
+gh attestation verify csa-linux-amd64.tar.gz \
+  -R randyinthedev-hash/callsignet \
+  --signer-workflow randyinthedev-hash/callsignet/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.6 \
+  --source-digest <태그가 가리키는 커밋> \
+  --deny-self-hosted-runners \
+  --predicate-type https://spdx.dev/Document/v2.3
+```
+
+`-R`만 주면 리포만 확인한다. 위의 옵션을 모두 주어야 이 리포의 이 워크플로가 이 태그의 이 커밋에서 만든 것임이 확인된다. 태그가 가리키는 커밋은 릴리스 본문에 적혀 있지만, 본문은 고칠 수 있으므로 그것은 편의를 위한 값이다. 강하게 확인하려면 리포를 받아 `git rev-parse v0.1.6^{}`으로 얻은 값이나 다른 믿을 수 있는 경로로 받은 값을 넣는다.
+
+이 확인이 말하는 것은 「이 파일은 그 리포의 그 태그의 그 커밋에서 그 워크플로가 만든 것이고, 부품 목록도 그때 그 파일에 대해 만든 것이다」까지다. 소스가 검토되었는지나 워크플로 자체가 온전한지는 말하지 않는다.
+
+오프라인에서 확인하려면 신뢰 뿌리를 온라인 환경에서 받아 안전한 경로로 옮겨 둔다. 신뢰 뿌리에는 자체 만료가 없어 오래된 서명은 계속 확인되지만, 마지막으로 받은 뒤의 폐기와 교체는 알 수 없다. 정기적으로 다시 받아 옮긴다.
+
+```bash
+gh attestation trusted-root > trusted-root.jsonl      # 온라인 환경에서 한 번
+gh attestation verify csa-linux-amd64.tar.gz \
+  --bundle csa-linux-amd64.tar.gz.attestations.jsonl \
+  --custom-trusted-root trusted-root.jsonl \
+  -R randyinthedev-hash/callsignet \
+  --signer-workflow randyinthedev-hash/callsignet/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.1.6 \
+  --source-digest <태그가 가리키는 커밋> \
+  --deny-self-hosted-runners
+```
+
+부품 목록의 권위 있는 사본은 묶음 안의 `sbom.spdx.json`과 증명 안의 predicate다. 릴리스에 따로 붙은 `.spdx.json`은 열람 편의용이고 묶음 안의 것과 바이트가 같다.
+
+```bash
 tar -xzf csa-linux-amd64.tar.gz
+cmp csa-linux-amd64/sbom.spdx.json csa-linux-amd64.spdx.json
 cd csa-linux-amd64
 ```
 

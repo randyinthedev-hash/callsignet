@@ -56,6 +56,7 @@ rm -rf "$WORK"; mkdir -p "$WORK"
 echo "== 묶음 둘"
 GO=$(find_go)
 [ -n "$GO" ] || { echo "go를 찾지 못했습니다. 자리를 주십시오: sudo GO=/path/to/go $0" >&2; exit 1; }
+export GO   # dist/pack.sh가 SBOM을 만들 때 go를 부른다
 # 같은 코드로 판 둘을 만든다. 둘째는 판 이름만 다르다.
 ( cd "$REPO" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 "$GO" build -trimpath -ldflags "-w" -o "$WORK/csa-a" ./cmd/csa )
 VER_A=$("$WORK/csa-a" version)

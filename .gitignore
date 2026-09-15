@@ -28,3 +28,4 @@ _workspace/
 
 # 설치 묶음을 만드는 자리
 dist/out/
+/tools/sbom/_work/
