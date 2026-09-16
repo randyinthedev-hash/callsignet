@@ -2,7 +2,9 @@
 
 csa 바이너리 안에 아래 라이브러리가 함께 들어간다. 각 라이선스가 요구하는 대로 저작권 표시와 라이선스 원문을 그대로 싣는다.
 
-이 목록은 `go version -m csa`가 내놓는 것과 같다. 의존이 바뀌면 이 파일도 함께 고친다.
+이 목록은 `go version -m csa`가 내놓는 것과 같다. 의존이 바뀌면 이 파일도 함께 고친다. 묶음을 만드는 도구가 실행 파일의 buildinfo의 모듈과 이 표를 견주어 다르면 만들지 않는다.
+
+csa에는 외부 라이브러리와 별도로 Go 런타임과 표준 라이브러리의 코드가 들어간다. Go의 라이선스는 바이너리로 재배포할 때 저작권 표시와 조건과 면책문을 함께 주라고 정한다. 그 원문을 아래에 싣는다. 실행 파일을 만든 Go 도구 사슬의 판은 묶음 안의 `sbom.spdx.json`에 있다. v0.1.6까지의 이 문서는 Go 런타임을 적지 않았다.
 
 | 라이브러리 | 판 | 라이선스 |
 |---|---|---|
@@ -15,6 +17,37 @@ csa 바이너리 안에 아래 라이브러리가 함께 들어간다. 각 라�
 | `golang.org/x/sys` | v0.48.0 | BSD 3-Clause |
 | `golang.zx2c4.com/wireguard` | v0.0.0-20260522210424-ecfc5a8d5446 | MIT |
 
+## Go 런타임과 표준 라이브러리
+
+```
+Copyright 2009 The Go Authors.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * Neither the name of Google LLC nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
 
 ## github.com/BurntSushi/toml v1.4.0
 

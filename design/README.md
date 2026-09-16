@@ -724,7 +724,7 @@ csa가 두 가지를 스스로 한다. 첫째, 기동할 때 터널 MTU가 바�
 
 **빌드 주체는 GitHub 호스트 러너에서 도는 그 태그의 `.github/workflows/release.yml`이다.** 러너는 `ubuntu-24.04`처럼 판을 적은 이름을 쓴다. 사람이 만든 바이너리는 붙이지 않는다. 증명의 서명 인증서에 워크플로의 자리와 참조(`…/release.yml@refs/tags/vX.Y.Z`)가 들어간다. 이것으로 SLSA Build Level 2다. Level 3은 조직이 공유하는 재사용 워크플로로 빌드를 옮겨야 되고, 아직 하지 않는다.
 
-**태그와 커밋과 바이너리는 네 겹으로 이어진다.** 증명의 출처 항목에 리포와 `refs/tags/vX.Y.Z`와 그 태그가 가리키는 커밋 해시가 들어간다. 증명의 대상 항목에 묶음의 이름과 sha256이 들어간다. 워크플로가 태그와 실행 파일이 찍는 판이 같은지 본다. 실행 파일의 buildinfo가 말하는 `vcs.revision`이 워크플로가 만든 커밋과 같고 `vcs.modified`가 거짓이며 GOOS와 GOARCH가 묶음 이름과 같은지 본다. 판 문자열만 맞춘 다른 커밋의 실행 파일은 이 마지막 겹에서 걸린다. 태그를 옮기지 않는다는 원칙이 이 연결의 전제다.
+**태그와 커밋과 바이너리는 네 겹으로 이어진다.** 증명의 출처 항목에 리포와 `refs/tags/vX.Y.Z`와 그 태그가 가리키는 커밋 해시가 들어간다. 증명의 대상 항목에 묶음의 이름과 sha256이 들어간다. 워크플로가 태그와 실행 파일이 찍는 판이 같은지 본다. 실행 파일의 buildinfo가 말하는 `vcs.revision`이 워크플로가 만든 커밋과 같고 `vcs.modified`가 거짓이며 GOOS와 GOARCH가 묶음 이름과 같고 주 패키지 경로가 `<모듈>/cmd/csa`인지 본다. 판 문자열만 맞춘 다른 커밋의 실행 파일은 이 마지막 겹에서 걸린다. 같은 모듈의 다른 프로그램은 주 패키지 경로에서 걸린다. 태그를 옮기지 않는다는 원칙이 이 연결의 전제다.
 
 **검증은 리포와 워크플로와 태그와 커밋을 모두 강제한다.** `-R`만 주면 리포만 확인한다. 기본 명령은 `-R <리포>`, `--signer-workflow <리포>/.github/workflows/release.yml`, `--source-ref refs/tags/vX.Y.Z`, `--source-digest <커밋>`, `--deny-self-hosted-runners`를 모두 준다. `--signer-workflow`에는 경로만 넣고 태그는 `--source-ref`로 따로 강제한다. SBOM 증명은 여기에 `--predicate-type https://spdx.dev/Document/v2.3`을 붙인다. 워크플로 안의 자체 검증도 같은 조건을 쓴다. 온라인 검증은 `gh auth login`이나 `GH_TOKEN`을 요구한다. 공개 리포를 인증 없이 검증할 수 있는지는 고정한 `gh`의 판에서 실제로 확인하기 전에는 약속하지 않는다. `gh`는 2.97.0 이상이어야 한다. 그 앞 판에는 `--signer-workflow` 검증을 우회하는 결함(GHSA-mm27-mwq9-fr5g)이 있다. 커밋 해시는 릴리스 본문에도 적지만 그것은 편의를 위한 값이다. 본문은 고칠 수 있으므로 독립적인 근거가 아니고, 강한 검증은 사용자가 가져온 태그나 다른 신뢰 경로의 커밋과 견주는 것이다.
 
@@ -732,7 +732,28 @@ csa가 두 가지를 스스로 한다. 첫째, 기동할 때 터널 MTU가 바�
 
 검증이 확인하는 것은 위의 연결이다. 확인하지 않는 것은 소스가 검토되었는지와 워크플로 자체가 온전한지다.
 
-**SBOM은 SPDX 2.3 JSON이고 묶음 전체를 설명한다.** 문서가 묶음 Package를 `DESCRIBES`하고, 묶음 Package는 `filesAnalyzed: true`이며 `sbom.spdx.json`을 뺀 묶음의 모든 일반 파일을 File 요소로 `CONTAINS`한다. File 요소마다 SHA-1과 SHA-256을 적는다. SPDX 2.3이 SHA-1을 요구한다. `install.sh`도 File이다. 설치 때 root로 도는 공급망 구성요소이기 때문이다. `packageVerificationCode`는 SPDX가 정한 SHA-1 기반 알고리즘으로 계산하고 `sbom.spdx.json`을 `packageVerificationCodeExcludedFiles`에 적는다. 실행 파일은 Go 주 모듈 Package에서 `GENERATED_FROM`이고, 주 모듈 Package는 Go 도구 사슬과 의존 모듈 Package 하나하나를 `STATIC_LINK`한다. 의존 모듈은 buildinfo가 말하는 것이다. `Replace`가 있으면 실제로 들어간 것을 Package로 적고 원래 모듈을 주석에 적으며, 로컬 파일 경로로 바꾼 것이 있으면 발행하지 않는다. 모듈의 `h1:` 해시는 go.sum 형식의 값이지 SPDX의 SHA-256이 아니므로 `checksums`에 넣지 않고 주석에 원문 그대로 둔다. 의존 모듈의 라이선스는 buildinfo에 없다. `THIRD-PARTY-NOTICES.md`의 표가 단일 출처이고, buildinfo의 모듈 집합과 그 표가 같지 않으면 발행하지 않는다. Go 실행 파일에는 동적으로 링크된 배포판 라이브러리가 없다. 다만 실행에는 리눅스 커널과 systemd와 nftables 같은 실행 환경이 필요하고, 그것은 이 SBOM의 포함 범위가 아니다.
+**SBOM은 SPDX 2.3 JSON이고 묶음 전체를 설명한다.** 문서 자체의 `dataLicense`는 SPDX가 정한 대로 `CC0-1.0`이고 제품의 라이선스와 별개다. 문서가 묶음 Package를 `DESCRIBES`하고, 묶음 Package는 `filesAnalyzed: true`이며 `sbom.spdx.json`을 뺀 묶음의 모든 일반 파일을 File 요소로 `CONTAINS`한다. File 요소마다 SHA-1과 SHA-256을 적는다. SPDX 2.3이 SHA-1을 요구한다. `install.sh`도 File이다. 설치 때 root로 도는 공급망 구성요소이기 때문이다. 묶음의 파일 집합은 정확히 `bin/csa`, `csa.service`, `install.sh`, `INSTALL.md`, `LICENSE`, `THIRD-PARTY-NOTICES.md`, `sbom.spdx.json`이다. 빠진 파일도 더 든 파일도 거절한다. `packageVerificationCode`는 SPDX가 정한 SHA-1 기반 알고리즘으로 계산하고 `sbom.spdx.json`을 `packageVerificationCodeExcludedFiles`에 적는다. 실행 파일은 Go 주 모듈 Package에서 `GENERATED_FROM`이다. 주 모듈 Package의 판은 태그가 준 제품의 판이고, buildinfo가 말하는 주 모듈의 판은 소스에서 만들면 `(devel)`일 수 있으므로 주석에 적을 뿐 견주지 않는다. 주 모듈 주석의 첫 조각은 `vcs.revision <커밋>`이고 검사가 그 커밋을 기대 커밋과 견준다. 실행 파일은 그대로 두고 SBOM의 커밋만 바꾼 것을 잡는 자리이고, 실행 파일의 `vcs.revision`을 보는 것과는 다른 자리다.
+
+**Go 컴파일러와 Go 런타임은 다른 요소다.** 실행 파일에는 외부 모듈과 별도로 Go 런타임과 표준 라이브러리의 코드가 들어간다. 실행 파일을 만든 Go 도구 사슬 Package는 실행 파일의 `BUILD_TOOL_OF`이고, 실행 파일에 들어간 Go 런타임과 표준 라이브러리 Package(`pkg:golang/stdlib@<판>`)는 주 모듈이 `STATIC_LINK`하는 것이다. 둘의 판은 buildinfo의 Go 판이고 라이선스는 `BSD-3-Clause`다. Go의 라이선스는 바이너리로 재배포할 때 저작권 표시와 조건과 면책문을 함께 주라고 정하므로, 실행 파일을 만든 Go 배포판의 `LICENSE` 원문을 `THIRD-PARTY-NOTICES.md`에 싣는다. 도구가 SBOM을 만들 때 그 원문이 만드는 도구 사슬의 `GOROOT/LICENSE`와 같은지 보고 그 도구 사슬의 판이 실행 파일의 buildinfo와 같은지 본다. 원문의 SHA-256을 런타임 Package의 주석에 적어 두고, 검사할 때 묶음 안의 고지 문서가 그 원문을 그대로 담고 있는지 그 값으로 본다. Go의 `PATENTS` 파일은 특허 허여이고 고지 의무가 아니므로 싣지 않는다.
+
+주 모듈 Package는 Go 런타임 Package와 의존 모듈 Package 하나하나를 `STATIC_LINK`한다. 의존 모듈은 buildinfo가 말하는 것이다. `Replace`가 있으면 실제로 들어간 것을 Package로 적고 원래 모듈을 주석에 적으며, 로컬 파일 경로로 바꾼 것이 있으면 발행하지 않는다. 모듈의 `h1:` 해시는 go.sum 형식의 값이지 SPDX의 SHA-256이 아니므로 `checksums`에 넣지 않고 주석에 원문 그대로 둔다. 의존 모듈의 라이선스는 buildinfo에 없다. `THIRD-PARTY-NOTICES.md`의 표가 단일 출처이고, buildinfo의 모듈 집합과 그 표가 같지 않으면 발행하지 않는다. 표의 행마다 그 모듈의 라이선스 원문 절이 같은 문서 안에 있어야 한다. Go 실행 파일에는 동적으로 링크된 배포판 라이브러리가 없다. 다만 실행에는 리눅스 커널과 systemd와 nftables 같은 실행 환경이 필요하고, 그것은 이 SBOM의 포함 범위가 아니다.
+
+**라이선스는 요소마다 근거가 다르다.**
+
+| 요소 | `licenseConcluded` | 근거 |
+|---|---|---|
+| 이 리포가 쓴 파일(`install.sh`, `csa.service`, `INSTALL.md`) | `Apache-2.0` | `LICENSE` |
+| `LICENSE` | `NOASSERTION`. `licenseComments`에 라이선스 원문이고 문안은 Apache Software Foundation이 공개한 것이라고 적는다 | 파일의 내용 |
+| `THIRD-PARTY-NOTICES.md` | `NOASSERTION`. `licenseComments`에 다른 권리자의 라이선스 원문과 저작권 표시를 담은 고지 문서라고 적는다 | 파일의 내용 |
+| 주 모듈 Package | `Apache-2.0`. `licenseDeclared`도 같다 | `LICENSE` |
+| 의존 모듈 Package | `THIRD-PARTY-NOTICES.md`의 표가 적은 라이선스를 SPDX 식별자로 옮긴 값. `licenseDeclared`는 `NOASSERTION` | 고지 문서 |
+| Go 도구 사슬 Package와 Go 런타임 Package | `BSD-3-Clause` | Go 배포판의 `LICENSE` |
+| 실행 파일 File | `Apache-2.0`과 `BSD-3-Clause`와 실행 파일에 든 의존 모듈의 라이선스를 `AND`로 이은 식. 같은 식별자는 한 번만 적는다 | buildinfo와 고지 문서 |
+| 묶음 Package | `licenseDeclared`는 `Apache-2.0`, `licenseConcluded`는 실행 파일과 같은 식 | 위와 같다 |
+
+`AND` 식은 도구가 buildinfo에서 본 구성요소의 라이선스를 모두 잇는다. 그것은 buildinfo만으로 모든 라이선스 의무가 확정된다는 보증이 아니다. 모듈 안에 다른 권리자의 코드가 섞여 있는지는 buildinfo가 말하지 않는다. 라이선스 원문과 저작권 표시를 담는 의무는 `THIRD-PARTY-NOTICES.md`가 지고, SBOM은 그 문서를 가리키는 것이지 대신하지 않는다.
+
+**대조하는 값을 고정한다.** 「같다」는 다음을 모두 견준 것이다. buildinfo와 SBOM 사이에서는 의존 모듈마다 경로와 판과 `go.sum` 해시와 교체 정보를 견준다. buildinfo와 고지 문서의 표 사이에서는 경로와 판을 견주고 표의 라이선스 값을 쓴다. 묶음 Package와 주 모듈 Package와 Go의 두 Package는 정해진 식별자로 따로 검사하고, SBOM의 Package는 하나하나 그 넷과 buildinfo의 의존 모듈로 이루어진 허용 집합에 들어야 한다. 어떤 식별자를 달았든 그 밖의 Package는 거절한다. SBOM 안에서 같은 SPDX 식별자가 둘이거나 같은 파일이 둘이면 거절한다. tar 안의 겹친 이름을 보는 것과는 별개다. 같은 경로에 다른 판이나 다른 해시를 적은 SBOM은 거절한다.
 
 **SBOM은 이 리포 안의 프로그램이 만들고 검사한다.** 표준 라이브러리 `debug/buildinfo`로 실행 파일의 모듈 목록을 읽고 묶음의 파일을 훑어 SPDX 문서를 쓴다. 외부 도구를 내려받지 않으므로 고정할 판과 체크섬이 없다. 같은 프로그램이 만든 것을 같은 해석으로 검사하면 구조를 잘못 이해한 결함이 양쪽에 남으므로, 생성한 JSON을 공식 SPDX 2.3 JSON 스키마로 따로 검증하고 SPDX 프로젝트의 검증 도구로 의미 검사도 한다. 스키마와 도구는 판과 해시를 고정한다. 자체 검사는 이 리포 고유의 의미 조건을 보고, 독립 검사는 SPDX 형식을 본다.
 
@@ -756,14 +777,14 @@ csa가 두 가지를 스스로 한다. 첫째, 기동할 때 터널 MTU가 바�
 
 - 태그와 실행 파일의 판이 다르다. 시험이나 취약점 검사가 실패한다.
 - buildinfo 검사가 실패한다. `vcs.revision`이 다르거나 `vcs.modified`가 참이거나 GOOS나 GOARCH가 다르거나 로컬 경로로 바꾼 모듈이 있다.
-- SBOM 검사가 실패한다. 개수가 아니라 내용을 본다. SPDX 판이 2.3이다. 문서 이름과 purl의 프로그램과 아키텍처가 묶음과 맞다. 주 모듈 경로가 맞고 그 판이 태그와 같다. Go 도구 사슬 정보가 있다. buildinfo가 말하는 의존 모듈 집합과 SBOM의 집합이 같다. `sbom.spdx.json`을 뺀 묶음의 모든 일반 파일이 SBOM에 있고 SHA-1과 SHA-256이 맞다. 독립 검사가 지난다.
+- SBOM 검사가 실패한다. 개수가 아니라 내용을 본다. SPDX 판이 2.3이고 `dataLicense`가 `CC0-1.0`이다. 문서 이름과 purl의 프로그램과 아키텍처가 묶음과 맞다. 주 모듈 경로가 맞고 그 판이 태그와 같고 주석의 커밋이 기대 커밋과 같다. Go 도구 사슬 Package와 Go 런타임 Package가 있고 판과 라이선스가 맞으며 런타임 주석의 LICENSE 해시가 고지 문서의 Go 원문과 같다. 의존 모듈이 위에서 고정한 값까지 같고 허용 집합 밖의 Package가 없으며 겹친 식별자나 파일이 없다. 묶음의 파일 집합이 계약의 집합과 같고 파일마다 SHA-1과 SHA-256과 라이선스가 맞다. 독립 검사가 지난다.
 - 묶음에 디렉터리와 일반 파일 말고 다른 것이 있다.
 - 묶음 수와 SBOM 사본 수와 증명 묶음 수가 같지 않다. 증명 묶음의 두 줄이 같은 대상 이름과 sha256을 가리키지 않거나 predicate가 정확히 하나씩이 아니다.
 - 워크플로가 만든 묶음을 그 워크플로 안에서 위의 검증 명령 그대로 온라인과 `--bundle` 둘 다로 확인했을 때 하나라도 실패한다. 릴리스를 만드는 작업이 실제로 발행할 파일을 다시 검증했을 때 하나라도 실패한다.
 
 이 자체 검증은 발행 구성의 오류를 막는 관문이다. 대상 파일을 잘못 잡은 것, predicate 종류가 틀린 것, bundle 조립 실패, 권한이나 저장소 등록 실패를 잡는다. 워크플로 자체가 침해되었을 때의 거짓 출처 증명은 잡지 못한다. 그것을 줄이는 것이 Level 3이다.
 
-**권한과 고정.** 증명을 만드는 작업에만 `contents: write`, `id-token: write`, `attestations: write`, `artifact-metadata: write`를 준다. 시험을 다시 돌리는 작업은 읽기만 한다. 액션은 커밋 해시로 고정한다. 러너에 미리 깔린 `gh`는 판이 움직이므로 정확한 판과 체크섬으로 따로 설치한다.
+**권한과 고정.** 증명을 만드는 작업에만 `id-token: write`, `attestations: write`, `artifact-metadata: write`를 주고 릴리스를 만드는 작업에만 `contents: write`를 준다. 시험을 다시 돌리는 작업은 읽기만 한다. 액션은 커밋 해시로 고정한다. 러너에 미리 깔린 `gh`는 판이 움직이므로 정확한 판과 체크섬으로 따로 설치한다.
 
 **예행 실행.** 태그를 붙이기 전에 워크플로를 `workflow_dispatch`로 돌려 릴리스를 만드는 걸음만 빼고 모두 밟아 본다. 예행 실행의 증명은 `refs/heads/main`으로 서명되어 태그를 강제하는 검증에 걸리지 않으므로 발행본과 섞이지 않는다. 다만 그 증명도 GitHub의 증명 저장소에 영구히 남는다.
 

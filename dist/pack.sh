@@ -13,9 +13,9 @@
 # /opt/callsignet/versions/<판>/에 옮기므로 묶음 안의 자리가 곧 설치된 자리다.
 #
 # 순서는 설계 문서의 「발행」 절대로다. 실행 파일과 나머지 파일을 자리에 두고,
-# SBOM을 만들고(그때 실행 파일의 buildinfo를 검사한다), PACK_HOOK이 있으면 그것을
-# 돌려 SBOM을 따로 검사하고, 그다음에야 tar를 만든다. SBOM의 사본을 tar 곁에
-# <이름>.spdx.json으로 둔다. tar 안의 것과 바이트가 같다.
+# SBOM을 만들고(그때 실행 파일의 buildinfo와 파일 집합과 고지 문서를 검사한다),
+# PACK_HOOK이 있으면 그것을 돌려 SBOM을 따로 검사하고, 그다음에야 tar를 만든다.
+# SBOM의 사본을 tar 곁에 <이름>.spdx.json으로 둔다. tar 안의 것과 바이트가 같다.
 #
 # 환경 변수
 #   PACK_VERSION   판. 비워 두면 실행 파일에 묻고, 이 머신에서 돌지 않으면 cmd/csa/main.go의 Version
@@ -56,8 +56,10 @@ cp "$REPO/INSTALL.md" "$REPO/LICENSE" "$REPO/THIRD-PARTY-NOTICES.md" "$stage/"
 
 allow=()
 [ "${PACK_ALLOW_MODIFIED:-0}" = 1 ] && allow=(-allow-modified)
+# 고지 문서의 Go 원문을 견줄 도구 사슬의 자리다. sudo 아래에서는 PATH에 go가 없을 수 있다.
+goroot=$("$GO" env GOROOT)
 ( cd "$REPO" && "$GO" run ./tools/sbom make -dir "$stage" -program csa -arch "$arch" \
-    -version "$version" -commit "$commit" -repo "$repo" -license Apache-2.0 ${allow[@]+"${allow[@]}"} )
+    -version "$version" -commit "$commit" -repo "$repo" -license Apache-2.0 -goroot "$goroot" ${allow[@]+"${allow[@]}"} )
 if [ -n "${PACK_HOOK:-}" ]; then
   $PACK_HOOK "$stage"
 fi

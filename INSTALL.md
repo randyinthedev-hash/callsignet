@@ -14,8 +14,8 @@
 | `csa.service` | systemd 서비스 파일 |
 | `install.sh` | 이 문서의 절차를 밟는 스크립트 |
 | `INSTALL.md` | 이 문서 |
-| `LICENSE`, `THIRD-PARTY-NOTICES.md` | 라이선스 |
-| `sbom.spdx.json` | 이 묶음의 부품 목록. SPDX 2.3이다. 자기 자신을 뺀 묶음의 모든 일반 파일과 실행 파일에 들어간 Go 모듈을 적는다 |
+| `LICENSE`, `THIRD-PARTY-NOTICES.md` | 라이선스. `THIRD-PARTY-NOTICES.md`에는 가져다 쓴 라이브러리와 Go 런타임의 라이선스 원문이 있다 |
+| `sbom.spdx.json` | 이 묶음의 부품 목록. SPDX 2.3이다. 자기 자신을 뺀 묶음의 모든 일반 파일과 실행 파일에 들어간 Go 런타임과 Go 모듈을 적는다 |
 
 릴리스에는 묶음 곁에 `sha256sum.txt`와 부품 목록의 사본(`csa-linux-<아키텍처>.spdx.json`)과 증명 묶음(`csa-linux-<아키텍처>.tar.gz.attestations.jsonl`)이 더 붙어 있다.
 

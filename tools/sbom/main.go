@@ -1,17 +1,21 @@
 // sbom은 설치 묶음의 부품 목록(SBOM)을 만들고 검사한다.
 //
-// 설계 문서의 「발행」 절이 정한 계약을 그대로 밟는다. SPDX 2.3 JSON 문서 하나가
-// 묶음 전체를 설명한다. 묶음 Package가 sbom.spdx.json을 뺀 모든 일반 파일을
-// CONTAINS하고, 실행 파일은 Go 주 모듈 Package에서 GENERATED_FROM이며, 주 모듈
-// Package는 Go 도구 사슬과 의존 모듈 Package 하나하나를 STATIC_LINK한다.
+// 설계 문서의 「발행」 절이 정한 계약을 그대로 밟는다. SPDX 2.3
+// JSON 문서 하나가 묶음 전체를 설명한다. 묶음 Package가 sbom.spdx.json을 뺀 모든
+// 파일을 CONTAINS하고, 실행 파일은 Go 주 모듈 Package에서 GENERATED_FROM이며, 주
+// 모듈 Package는 Go 런타임 Package와 의존 모듈 Package 하나하나를 STATIC_LINK한다.
+// 실행 파일을 만든 Go 도구 사슬은 실행 파일의 BUILD_TOOL_OF이고 런타임과 다른
+// 요소다.
 //
 // 외부 도구를 내려받지 않는다. 표준 라이브러리 debug/buildinfo로 실행 파일의
-// 모듈 목록을 읽고 묶음의 파일을 훑는다. 의존 모듈의 라이선스는 buildinfo에
-// 없으므로 THIRD-PARTY-NOTICES.md의 표가 단일 출처다. 그 표와 buildinfo의 모듈
-// 집합이 다르면 만들지도 검사를 지나지도 않는다.
+// 모듈 목록을 읽고 묶음의 파일을 훑는다. 주 패키지 경로가 <모듈>/cmd/csa인지
+// 본다. 의존 모듈의 라이선스는 buildinfo에 없으므로 THIRD-PARTY-NOTICES.md의 표가
+// 단일 출처다. 그 표와 buildinfo의 모듈 집합이 다르면 만들지도 검사를 지나지도
+// 않는다. 같은 문서에 실린 Go의 LICENSE 원문이 만드는 도구 사슬의 것과 같은지도
+// 본다.
 //
-//	sbom make   -dir <묶음 디렉터리> -program csa -arch amd64 -version 0.1.6 -commit <해시> -repo <소유자/리포> -license Apache-2.0
-//	sbom verify -tar <묶음.tar.gz>    -program csa -arch amd64 -version 0.1.6 -commit <해시> -repo <소유자/리포> -license Apache-2.0
+//	sbom make   -dir <묶음 디렉터리> -program csa -arch amd64 -version 0.1.7 -commit <해시> -repo <소유자/리포> -license Apache-2.0
+//	sbom verify -tar <묶음.tar.gz>    -program csa -arch amd64 -version 0.1.7 -commit <해시> -repo <소유자/리포> -license Apache-2.0
 //	sbom jsonl  -out <파일.jsonl> <bundle 1> <bundle 2>
 //
 // make는 묶음 디렉터리에 sbom.spdx.json을 쓴다. verify는 tar를 풀지 않고 읽어
@@ -35,9 +39,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -47,10 +53,19 @@ import (
 // 않으므로 Package Verification Code의 제외 목록에 이 이름이 들어간다.
 const sbomName = "sbom.spdx.json"
 
+// noticesName은 고지 문서다. 의존 모듈의 라이선스와 Go의 LICENSE 원문이 여기 있다.
+const noticesName = "THIRD-PARTY-NOTICES.md"
+
 const (
 	provenanceType = "https://slsa.dev/provenance/v1"
 	spdxType       = "https://spdx.dev/Document/v2.3"
+	goLicense      = "BSD-3-Clause"
+	goHeading      = "## Go 런타임과 표준 라이브러리"
 )
+
+// programs는 묶음이 있는 프로그램과 서비스 파일의 유무다. csa 하나다. 모르는
+// 프로그램은 거절한다.
+var programs = map[string]bool{"csa": true}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -87,35 +102,39 @@ func usage() {
 type spec struct {
 	program       string
 	arch          string
-	version       string // 태그의 판. v 없이 0.1.6
+	version       string // 태그의 판. v 없이 0.1.7
 	commit        string // 태그가 가리키는 커밋
 	repo          string // 소유자/리포
-	license       string // 이 리포의 라이선스. SPDX 식별자
+	license       string // 이 리포의 파일과 주 모듈의 라이선스. SPDX 식별자
 	module        string // 주 모듈 경로. 비워 두면 이 프로그램 자신의 모듈이다
+	pkgPath       string // 주 패키지 경로. 비워 두면 <모듈>/cmd/<프로그램>
+	goroot        string // Go 도구 사슬의 자리. 비워 두면 go env GOROOT
 	allowModified bool
 }
 
 func (s *spec) flags(fs *flag.FlagSet) {
-	fs.StringVar(&s.program, "program", "", "프로그램 이름")
+	fs.StringVar(&s.program, "program", "", "프로그램 이름. csa")
 	fs.StringVar(&s.arch, "arch", "", "아키텍처")
 	fs.StringVar(&s.version, "version", "", "판. v 없이")
 	fs.StringVar(&s.commit, "commit", "", "태그가 가리키는 커밋 해시")
 	fs.StringVar(&s.repo, "repo", "", "GitHub 리포. 소유자/이름")
-	fs.StringVar(&s.license, "license", "", "이 리포의 라이선스. SPDX 식별자")
+	fs.StringVar(&s.license, "license", "", "이 리포의 파일과 주 모듈의 라이선스. SPDX 식별자")
 	fs.StringVar(&s.module, "module", "", "주 모듈 경로. 비워 두면 이 프로그램의 모듈")
+	fs.StringVar(&s.pkgPath, "package", "", "주 패키지 경로. 비워 두면 <모듈>/cmd/<프로그램>. 시험이 쓴다")
+	fs.StringVar(&s.goroot, "goroot", "", "Go 도구 사슬의 자리. 비워 두면 go env GOROOT")
 	fs.BoolVar(&s.allowModified, "allow-modified", false, "vcs.modified가 참이어도 받는다. 손으로 만들 때만 쓴다. 발행 워크플로는 쓰지 않는다")
 }
 
 func (s *spec) check() error {
 	var bad []string
-	if s.program == "" {
-		bad = append(bad, "-program")
+	if _, ok := programs[s.program]; !ok {
+		bad = append(bad, "-program (csa)")
 	}
 	if s.arch == "" {
 		bad = append(bad, "-arch")
 	}
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$`).MatchString(s.version) {
-		bad = append(bad, "-version (예: 0.1.6)")
+		bad = append(bad, "-version (예: 0.1.7)")
 	}
 	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(s.commit) {
 		bad = append(bad, "-commit (40자리 16진수)")
@@ -136,11 +155,24 @@ func (s *spec) check() error {
 		}
 		s.module = m
 	}
+	if s.pkgPath == "" {
+		s.pkgPath = s.module + "/cmd/" + s.program
+	}
 	return nil
 }
 
 func (s spec) bundle() string { return s.program + "-linux-" + s.arch }
 func (s spec) binary() string { return "bin/" + s.program }
+
+// files는 묶음에 정확히 들어 있어야 하는 파일이다. SBOM은 뺀 것이다.
+func (s spec) files() []string {
+	out := []string{s.binary(), "install.sh", "INSTALL.md", "LICENSE", noticesName}
+	if programs[s.program] {
+		out = append(out, s.program+".service")
+	}
+	sort.Strings(out)
+	return out
+}
 
 // ownModule은 이 프로그램이 든 모듈의 경로다. 검사할 실행 파일의 주 모듈이 이것과
 // 같아야 한다. 이 도구는 그 리포 안에 있다.
@@ -159,7 +191,7 @@ type entry struct {
 	name   string
 	sha1   string
 	sha256 string
-	body   []byte // 실행 파일과 SBOM과 고지 문서만 담아 둔다
+	body   []byte
 }
 
 // digest는 바이트를 두 번 재어 돌려준다.
@@ -296,6 +328,33 @@ func find(entries []entry, name string) (entry, bool) {
 	return entry{}, false
 }
 
+// checkFiles는 묶음의 파일 집합이 계약의 집합과 정확히 같은지 본다. SBOM은 뺀다.
+// 빠진 파일도 더 든 파일도 거절한다.
+func checkFiles(s spec, entries []entry) error {
+	want := map[string]bool{}
+	for _, n := range s.files() {
+		want[n] = true
+	}
+	var bad []string
+	for _, e := range entries {
+		if e.name == sbomName {
+			continue
+		}
+		if !want[e.name] {
+			bad = append(bad, "묶음에 계약에 없는 파일이 있다: "+e.name)
+		}
+		delete(want, e.name)
+	}
+	for n := range want {
+		bad = append(bad, "묶음에 있어야 하는 파일이 없다: "+n)
+	}
+	if len(bad) > 0 {
+		sort.Strings(bad)
+		return fmt.Errorf("묶음의 파일 집합이 계약과 다르다:\n  %s", strings.Join(bad, "\n  "))
+	}
+	return nil
+}
+
 // ---------- 실행 파일의 buildinfo ----------
 
 // module은 실행 파일에 실제로 들어간 모듈 하나다. Replace가 있었으면 들어간 것이
@@ -315,7 +374,8 @@ type build struct {
 }
 
 // inspect는 실행 파일의 buildinfo를 읽고 계약이 요구하는 것을 본다. 다른 커밋에서
-// 만들고 판 문자열만 맞춘 실행 파일은 vcs.revision에서 걸린다.
+// 만들고 판 문자열만 맞춘 실행 파일은 vcs.revision에서 걸린다. 같은 모듈의 다른
+// 프로그램(시험용 실행 파일 같은 것)은 주 패키지 경로에서 걸린다.
 func inspect(bin []byte, s spec) (build, error) {
 	bi, err := buildinfo.Read(bytes.NewReader(bin))
 	if err != nil {
@@ -340,6 +400,9 @@ func inspect(bin []byte, s spec) (build, error) {
 	}
 	if bi.Main.Path != s.module {
 		bad = append(bad, fmt.Sprintf("주 모듈 경로가 다르다. 실행 파일 %s, 기대 %s", bi.Main.Path, s.module))
+	}
+	if bi.Path != s.pkgPath {
+		bad = append(bad, fmt.Sprintf("주 패키지 경로가 다르다. 실행 파일 %s, 기대 %s", bi.Path, s.pkgPath))
 	}
 	if bi.GoVersion == "" {
 		bad = append(bad, "Go 도구 사슬의 판이 없다")
@@ -373,7 +436,7 @@ func isLocalPath(p string) bool {
 	return !strings.Contains(first, ".")
 }
 
-// ---------- 고지 문서의 표 ----------
+// ---------- 고지 문서 ----------
 
 // licenseIDs는 고지 문서가 쓰는 라이선스 이름과 SPDX 식별자다. 여기 없는 이름은
 // 거절한다. 모르는 라이선스를 조용히 지나치지 않으려는 것이다.
@@ -389,43 +452,97 @@ var licenseIDs = map[string]string{
 // noticeRow는 고지 문서의 표 한 줄이다. | `경로` | 판 | 라이선스 | 모양이다.
 var noticeRow = regexp.MustCompile("^\\| `([^`]+)` \\| ([^|]+?) \\| ([^|]+?) \\|$")
 
-// readNotices는 THIRD-PARTY-NOTICES.md의 표를 읽어 모듈마다 라이선스를 돌려준다.
-func readNotices(b []byte) (map[string]string, error) {
-	out := map[string]string{}
-	for _, line := range strings.Split(string(b), "\n") {
+// notices는 고지 문서에서 읽은 것이다. 표와 Go의 LICENSE 원문과 본문이다.
+type notices struct {
+	table  map[string]string // 경로@판 → SPDX 식별자
+	goText string            // Go의 LICENSE 원문. 끝의 줄바꿈은 뺀 것
+	body   string
+}
+
+// readNotices는 THIRD-PARTY-NOTICES.md를 읽는다. 표의 행마다 라이선스 이름이 아는
+// 것이어야 한다. Go의 원문 절이 있어야 한다.
+func readNotices(b []byte) (notices, error) {
+	n := notices{table: map[string]string{}, body: string(b)}
+	for _, line := range strings.Split(n.body, "\n") {
 		m := noticeRow.FindStringSubmatch(strings.TrimSpace(line))
 		if m == nil {
 			continue
 		}
 		id, ok := licenseIDs[strings.TrimSpace(m[3])]
 		if !ok {
-			return nil, fmt.Errorf("고지 문서의 라이선스 이름을 모른다: %q (%s)", m[3], m[1])
+			return notices{}, fmt.Errorf("고지 문서의 라이선스 이름을 모른다: %q (%s)", m[3], m[1])
 		}
-		out[m[1]+"@"+strings.TrimSpace(m[2])] = id
+		n.table[m[1]+"@"+strings.TrimSpace(m[2])] = id
 	}
-	if len(out) == 0 {
-		return nil, errors.New("고지 문서에서 표를 찾지 못했다")
+	if len(n.table) == 0 {
+		return notices{}, errors.New("고지 문서에서 표를 찾지 못했다")
 	}
-	return out, nil
+	text, err := fencedAfter(n.body, goHeading)
+	if err != nil {
+		return notices{}, err
+	}
+	n.goText = text
+	return n, nil
 }
 
-// matchNotices는 buildinfo의 모듈 집합과 고지 문서의 표가 같은지 본다. 표가 단일
-// 출처이므로 어느 쪽에만 있는 것이 있으면 발행하지 않는다.
-func matchNotices(deps []module, notices map[string]string) (map[string]string, error) {
+// fencedAfter는 제목 줄 뒤에 처음 나오는 ``` 블록의 안을 돌려준다. 끝의 줄바꿈은 뺀다.
+func fencedAfter(body, heading string) (string, error) {
+	lines := strings.Split(body, "\n")
+	at := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == heading {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return "", fmt.Errorf("고지 문서에 절이 없다: %s", heading)
+	}
+	start := -1
+	for i := at + 1; i < len(lines); i++ {
+		if strings.HasPrefix(lines[i], "```") {
+			if start < 0 {
+				start = i + 1
+				continue
+			}
+			return strings.TrimRight(strings.Join(lines[start:i], "\n"), "\n"), nil
+		}
+	}
+	return "", fmt.Errorf("고지 문서의 절에 원문 블록이 없다: %s", heading)
+}
+
+// hasSection은 모듈의 원문 절이 있는지 본다. 제목은 ## 경로 판 모양이다.
+func (n notices) hasSection(m module) bool {
+	want := "## " + m.path + " " + m.version
+	for _, l := range strings.Split(n.body, "\n") {
+		if strings.TrimSpace(l) == want {
+			return true
+		}
+	}
+	return false
+}
+
+// matchNotices는 buildinfo의 모듈 집합과 고지 문서의 표가 같은지 본다. 경로와 판을
+// 견준다. 표가 단일 출처이므로 어느 쪽에만 있는 것이 있으면 발행하지 않는다.
+// 행마다 원문 절도 있어야 한다.
+func matchNotices(deps []module, n notices) (map[string]string, error) {
 	var bad []string
 	seen := map[string]bool{}
 	lic := map[string]string{}
 	for _, d := range deps {
 		key := d.path + "@" + d.version
-		id, ok := notices[key]
+		id, ok := n.table[key]
 		if !ok {
 			bad = append(bad, "실행 파일에는 있는데 고지 문서의 표에 없다: "+key)
 			continue
 		}
+		if !n.hasSection(d) {
+			bad = append(bad, "고지 문서에 원문 절이 없다: "+key)
+		}
 		seen[key] = true
 		lic[key] = id
 	}
-	for key := range notices {
+	for key := range n.table {
 		if !seen[key] {
 			bad = append(bad, "고지 문서의 표에는 있는데 실행 파일에 없다: "+key)
 		}
@@ -435,6 +552,55 @@ func matchNotices(deps []module, notices map[string]string) (map[string]string, 
 		return nil, fmt.Errorf("의존 모듈과 고지 문서가 다르다:\n  %s", strings.Join(bad, "\n  "))
 	}
 	return lic, nil
+}
+
+// goLicenseText는 이 도구를 돌리는 Go 도구 사슬의 LICENSE 원문이다. 실행 파일을
+// 만든 도구 사슬과 같은 판이어야 한다. 그래야 고지 문서에 실린 원문이 실제로
+// 쓴 배포판의 것이라고 말할 수 있다.
+func goLicenseText(s spec, goVersion string) (string, error) {
+	if runtime.Version() != goVersion {
+		return "", fmt.Errorf("이 도구를 돌리는 Go의 판이 실행 파일을 만든 Go의 판과 다르다. 도구 %s, 실행 파일 %s. 같은 도구 사슬로 돌려라", runtime.Version(), goVersion)
+	}
+	root := s.goroot
+	if root == "" {
+		out, err := exec.Command("go", "env", "GOROOT").Output()
+		if err == nil {
+			root = strings.TrimSpace(string(out))
+		}
+	}
+	if root == "" {
+		root = runtime.GOROOT()
+	}
+	if root == "" {
+		return "", errors.New("Go 도구 사슬의 자리를 알 수 없다. -goroot로 주라")
+	}
+	b, err := os.ReadFile(filepath.Join(root, "LICENSE"))
+	if err != nil {
+		return "", fmt.Errorf("Go 도구 사슬의 LICENSE를 읽지 못했다: %w", err)
+	}
+	return strings.TrimRight(string(b), "\n"), nil
+}
+
+func sha256Hex(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
+}
+
+// licenseExpr는 실행 파일과 묶음의 licenseConcluded다. 이 리포의 라이선스와 Go의
+// 라이선스와 의존 모듈의 라이선스를 AND로 잇는다. buildinfo가 본 구성요소의 것을
+// 모두 이은 식이지, 모든 라이선스 의무가 이것으로 확정된다는 뜻은 아니다.
+func licenseExpr(own string, deps map[string]string) string {
+	set := map[string]bool{goLicense: true}
+	for _, id := range deps {
+		set[id] = true
+	}
+	delete(set, own)
+	var rest []string
+	for id := range set {
+		rest = append(rest, id)
+	}
+	sort.Strings(rest)
+	return strings.Join(append([]string{own}, rest...), " AND ")
 }
 
 // ---------- SPDX 문서 ----------
@@ -477,6 +643,7 @@ type file struct {
 	Types            []string   `json:"fileTypes,omitempty"`
 	Checksums        []checksum `json:"checksums"`
 	LicenseConcluded string     `json:"licenseConcluded"`
+	LicenseComments  string     `json:"licenseComments,omitempty"`
 	CopyrightText    string     `json:"copyrightText"`
 }
 
@@ -508,7 +675,8 @@ const (
 	idDocument = "SPDXRef-DOCUMENT"
 	idBundle   = "SPDXRef-Package-bundle"
 	idMain     = "SPDXRef-Package-main"
-	idStdlib   = "SPDXRef-Package-go-stdlib"
+	idGo       = "SPDXRef-Package-go"        // 실행 파일을 만든 Go 도구 사슬
+	idStdlib   = "SPDXRef-Package-go-stdlib" // 실행 파일에 들어간 Go 런타임과 표준 라이브러리
 )
 
 // spdxID는 이름을 SPDX 식별자에 쓸 수 있는 글자로 바꾼다. 글자와 숫자와 점과
@@ -539,6 +707,22 @@ func fileTypes(name string) []string {
 	}
 }
 
+// fileLicense는 파일마다의 licenseConcluded와 그 까닭이다. 이 리포가 쓴 파일은 이
+// 리포의 라이선스다. 실행 파일은 들어간 것을 모두 이은 식이다. 라이선스 원문과
+// 다른 권리자의 고지를 담은 파일에는 결론을 내리지 않는다.
+func fileLicense(name string, s spec, expr string) (string, string) {
+	switch {
+	case strings.HasPrefix(name, "bin/"):
+		return expr, ""
+	case name == "LICENSE":
+		return "NOASSERTION", "라이선스 원문이다. Apache License 2.0의 문안은 Apache Software Foundation이 공개한 것이다"
+	case name == noticesName:
+		return "NOASSERTION", "다른 권리자의 라이선스 원문과 저작권 표시를 담은 고지 문서다"
+	default:
+		return s.license, ""
+	}
+}
+
 // verificationCodeOf는 SPDX가 정한 대로 계산한다. 포함하는 파일들의 SHA-1을 정렬해
 // 이어 붙이고 그것의 SHA-1이다.
 func verificationCodeOf(entries []entry) string {
@@ -554,12 +738,20 @@ func verificationCodeOf(entries []entry) string {
 }
 
 func purlGo(path, version string) string {
-	return "pkg:golang/" + path + "@" + version
+	i := strings.LastIndex(path, "/")
+	if i < 0 {
+		return "pkg:golang/" + path + "@" + version
+	}
+	return "pkg:golang/" + path[:i] + "/" + path[i+1:] + "@" + version
 }
 
-// compose는 묶음의 내용과 buildinfo와 라이선스 표로 SPDX 문서를 만든다.
-func compose(s spec, entries []entry, b build, lic map[string]string, created time.Time) document {
+func goComment(goVersion, licenseHash string) string {
+	return fmt.Sprintf("Go 도구 사슬 %s의 런타임과 표준 라이브러리. LICENSE sha256 %s. 원문은 %s에 있다", goVersion, licenseHash, noticesName)
+}
+
+func compose(s spec, entries []entry, b build, lic map[string]string, goHash string, created time.Time) document {
 	bundle := s.bundle()
+	expr := licenseExpr(s.license, lic)
 	doc := document{
 		SPDXVersion:       "SPDX-2.3",
 		DataLicense:       "CC0-1.0",
@@ -580,6 +772,7 @@ func compose(s spec, entries []entry, b build, lic map[string]string, created ti
 		}
 		id := spdxID("File", e.name)
 		fileIDs = append(fileIDs, id)
+		concluded, why := fileLicense(e.name, s, expr)
 		files = append(files, file{
 			Name:  "./" + e.name,
 			ID:    id,
@@ -588,7 +781,8 @@ func compose(s spec, entries []entry, b build, lic map[string]string, created ti
 				{Algorithm: "SHA1", Value: e.sha1},
 				{Algorithm: "SHA256", Value: e.sha256},
 			},
-			LicenseConcluded: s.license,
+			LicenseConcluded: concluded,
+			LicenseComments:  why,
 			CopyrightText:    "NOASSERTION",
 		})
 	}
@@ -600,7 +794,7 @@ func compose(s spec, entries []entry, b build, lic map[string]string, created ti
 		DownloadLocation: fmt.Sprintf("https://github.com/%s/releases/download/v%s/%s.tar.gz", s.repo, s.version, bundle),
 		FilesAnalyzed:    true,
 		VerificationCode: &verificationCode{Value: verificationCodeOf(entries), Excluded: []string{"./" + sbomName}},
-		LicenseConcluded: s.license,
+		LicenseConcluded: expr,
 		LicenseDeclared:  s.license,
 		CopyrightText:    "NOASSERTION",
 		Purpose:          "INSTALL",
@@ -617,25 +811,39 @@ func compose(s spec, entries []entry, b build, lic map[string]string, created ti
 		CopyrightText:    "NOASSERTION",
 		Purpose:          "APPLICATION",
 		ExternalRefs:     []externalRef{{Category: "PACKAGE-MANAGER", Type: "purl", Locator: purlGo(b.mainPath, "v"+s.version)}},
-		Comment:          "vcs.revision " + s.commit,
+		Comment:          "vcs.revision " + s.commit + ". 주 패키지 " + s.pkgPath,
 	}
-	if b.mainVer != "" && b.mainVer != "(devel)" {
+	// 판은 태그가 준 제품의 판이다. buildinfo가 말하는 주 모듈의 판은 소스에서 만들면
+	// (devel)일 수 있으므로 적어 둘 뿐 견주지 않는다.
+	if b.mainVer != "" {
 		main.Comment += ". buildinfo가 말하는 주 모듈의 판 " + b.mainVer
 	}
 	doc.Packages = append(doc.Packages, main)
 	goVer := strings.TrimPrefix(b.goVersion, "go")
+	doc.Packages = append(doc.Packages, pkg{
+		Name:             "go",
+		ID:               idGo,
+		Version:          goVer,
+		DownloadLocation: "https://go.dev/dl/",
+		FilesAnalyzed:    false,
+		LicenseConcluded: goLicense,
+		LicenseDeclared:  goLicense,
+		CopyrightText:    "NOASSERTION",
+		Purpose:          "APPLICATION",
+		Comment:          "실행 파일을 만든 Go 도구 사슬 " + b.goVersion + ". 실행 파일에 들어가지 않는다",
+	})
 	doc.Packages = append(doc.Packages, pkg{
 		Name:             "stdlib",
 		ID:               idStdlib,
 		Version:          goVer,
 		DownloadLocation: "https://go.dev/dl/",
 		FilesAnalyzed:    false,
-		LicenseConcluded: "BSD-3-Clause",
-		LicenseDeclared:  "BSD-3-Clause",
+		LicenseConcluded: goLicense,
+		LicenseDeclared:  goLicense,
 		CopyrightText:    "NOASSERTION",
 		Purpose:          "LIBRARY",
 		ExternalRefs:     []externalRef{{Category: "PACKAGE-MANAGER", Type: "purl", Locator: purlGo("stdlib", goVer)}},
-		Comment:          "Go 도구 사슬 " + b.goVersion,
+		Comment:          goComment(b.goVersion, goHash),
 	})
 	rel := []relationship{
 		{From: idDocument, Type: "DESCRIBES", To: idBundle},
@@ -643,7 +851,9 @@ func compose(s spec, entries []entry, b build, lic map[string]string, created ti
 	for _, id := range fileIDs {
 		rel = append(rel, relationship{From: idBundle, Type: "CONTAINS", To: id})
 	}
-	rel = append(rel, relationship{From: spdxID("File", s.binary()), Type: "GENERATED_FROM", To: idMain})
+	binID := spdxID("File", s.binary())
+	rel = append(rel, relationship{From: binID, Type: "GENERATED_FROM", To: idMain})
+	rel = append(rel, relationship{From: idGo, Type: "BUILD_TOOL_OF", To: binID})
 	rel = append(rel, relationship{From: idMain, Type: "STATIC_LINK", To: idStdlib})
 	for _, d := range b.deps {
 		id := spdxID("Package", d.path)
@@ -662,13 +872,29 @@ func compose(s spec, entries []entry, b build, lic map[string]string, created ti
 			Comment: "go.sum " + d.sum,
 		}
 		if d.orig != "" {
-			p.Comment += ". " + d.orig + " 을 이것으로 바꿔 넣었다"
+			p.Comment += ". " + replacedNote(d)
 		}
 		doc.Packages = append(doc.Packages, p)
 		rel = append(rel, relationship{From: idMain, Type: "STATIC_LINK", To: id})
 	}
 	doc.Relationships = rel
 	return doc
+}
+
+func replacedNote(d module) string { return d.orig + " 을 이것으로 바꿔 넣었다" }
+
+// revisionRe는 주 모듈 주석의 첫 조각 「vcs.revision <커밋>」이다.
+var revisionRe = regexp.MustCompile(`^vcs\.revision ([0-9a-f]{40})(\. |$)`)
+
+// revisionOf는 주 모듈 주석에서 커밋을 꺼낸다. 모양이 다르면 빈 값이다. 검사는 이
+// 값을 기대 커밋과 견준다. 실행 파일의 vcs.revision을 보는 것과는 다른 자리다.
+// 실행 파일은 그대로 두고 SBOM의 커밋만 바꾼 것을 여기서 잡는다.
+func revisionOf(comment string) string {
+	m := revisionRe.FindStringSubmatch(comment)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // ---------- make ----------
@@ -678,7 +904,6 @@ func runMake(args []string) error {
 	var s spec
 	s.flags(fs)
 	dir := fs.String("dir", "", "묶음 디렉터리")
-	notices := fs.String("notices", "", "고지 문서. 비워 두면 묶음 안의 THIRD-PARTY-NOTICES.md")
 	fs.Parse(args)
 	if err := s.check(); err != nil {
 		return err
@@ -692,36 +917,32 @@ func runMake(args []string) error {
 	if err != nil {
 		return err
 	}
-	bin, ok := find(entries, s.binary())
-	if !ok {
-		return fmt.Errorf("묶음에 실행 파일이 없다: %s", s.binary())
+	if err := checkFiles(s, entries); err != nil {
+		return err
 	}
+	bin, _ := find(entries, s.binary())
 	b, err := inspect(bin.body, s)
 	if err != nil {
 		return err
 	}
-	var noticeBody []byte
-	if *notices != "" {
-		noticeBody, err = os.ReadFile(*notices)
-		if err != nil {
-			return err
-		}
-	} else {
-		n, ok := find(entries, "THIRD-PARTY-NOTICES.md")
-		if !ok {
-			return errors.New("묶음에 THIRD-PARTY-NOTICES.md가 없다")
-		}
-		noticeBody = n.body
-	}
-	table, err := readNotices(noticeBody)
+	nt, _ := find(entries, noticesName)
+	n, err := readNotices(nt.body)
 	if err != nil {
 		return err
 	}
-	lic, err := matchNotices(b.deps, table)
+	lic, err := matchNotices(b.deps, n)
 	if err != nil {
 		return err
 	}
-	doc := compose(s, entries, b, lic, time.Now())
+	// 고지 문서에 실린 Go의 원문이 이 도구 사슬의 것과 같아야 한다.
+	want, err := goLicenseText(s, b.goVersion)
+	if err != nil {
+		return err
+	}
+	if n.goText != want {
+		return fmt.Errorf("고지 문서의 Go 원문이 이 도구 사슬의 GOROOT/LICENSE와 다르다. 「%s」 절을 그 파일의 내용으로 바꿔라", strings.TrimPrefix(goHeading, "## "))
+	}
+	doc := compose(s, entries, b, lic, sha256Hex(want), time.Now())
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
@@ -753,17 +974,17 @@ func runVerify(args []string) error {
 	if err != nil {
 		return err
 	}
-	bin, ok := find(entries, s.binary())
-	if !ok {
-		return fmt.Errorf("묶음에 실행 파일이 없다: %s", s.binary())
-	}
-	b, err := inspect(bin.body, s)
-	if err != nil {
-		return err
-	}
 	sbom, ok := find(entries, sbomName)
 	if !ok {
 		return fmt.Errorf("묶음에 %s이 없다", sbomName)
+	}
+	if err := checkFiles(s, entries); err != nil {
+		return err
+	}
+	bin, _ := find(entries, s.binary())
+	b, err := inspect(bin.body, s)
+	if err != nil {
+		return err
 	}
 	if *copyPath != "" {
 		c, err := os.ReadFile(*copyPath)
@@ -774,33 +995,44 @@ func runVerify(args []string) error {
 			return fmt.Errorf("SBOM 사본이 묶음 안의 것과 다르다: %s", *copyPath)
 		}
 	}
-	notice, ok := find(entries, "THIRD-PARTY-NOTICES.md")
-	if !ok {
-		return errors.New("묶음에 THIRD-PARTY-NOTICES.md가 없다")
-	}
-	table, err := readNotices(notice.body)
+	nt, _ := find(entries, noticesName)
+	n, err := readNotices(nt.body)
 	if err != nil {
 		return err
 	}
-	lic, err := matchNotices(b.deps, table)
+	lic, err := matchNotices(b.deps, n)
 	if err != nil {
 		return err
+	}
+	// 같은 도구 사슬로 돌리는 자리에서는 Go의 원문을 바로 견준다. 다른 자리에서는
+	// SBOM에 적힌 해시로 본다. 그 해시는 만들 때 바로 견준 원문의 것이다.
+	if runtime.Version() == b.goVersion {
+		want, err := goLicenseText(s, b.goVersion)
+		if err != nil {
+			return err
+		}
+		if n.goText != want {
+			return errors.New("고지 문서의 Go 원문이 이 도구 사슬의 GOROOT/LICENSE와 다르다")
+		}
 	}
 	var doc document
 	if err := json.Unmarshal(sbom.body, &doc); err != nil {
 		return fmt.Errorf("%s을 읽지 못했다: %w", sbomName, err)
 	}
-	if err := checkDoc(doc, s, entries, b, lic); err != nil {
+	if err := checkDoc(doc, s, entries, b, lic, sha256Hex(n.goText)); err != nil {
 		return err
 	}
 	fmt.Printf("묶음이 계약대로입니다. 파일 %d개, 의존 모듈 %d개, Go %s, 커밋 %s: %s\n", len(entries)-1, len(b.deps), b.goVersion, s.commit[:7], *tarPath)
 	return nil
 }
 
-// checkDoc은 SBOM이 묶음의 내용과 buildinfo와 맞는지 본다. 개수가 아니라 내용을 본다.
-func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]string) error {
+// checkDoc은 SBOM이 묶음의 내용과 buildinfo와 맞는지 본다. 개수가 아니라 내용을
+// 본다. 의존 모듈은 경로와 판과 go.sum 해시와 교체 정보와 라이선스를 견주고,
+// 묶음·주 모듈·Go의 두 Package는 정해진 식별자로 따로 본다.
+func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]string, goHash string) error {
 	var bad []string
 	note := func(f string, a ...any) { bad = append(bad, fmt.Sprintf(f, a...)) }
+	expr := licenseExpr(s.license, lic)
 	if doc.SPDXVersion != "SPDX-2.3" {
 		note("spdxVersion이 SPDX-2.3이 아니다: %s", doc.SPDXVersion)
 	}
@@ -813,8 +1045,26 @@ func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]str
 	if len(doc.Describes) != 1 || doc.Describes[0] != idBundle {
 		note("문서가 묶음 Package를 DESCRIBES하지 않는다")
 	}
+	// Package는 허용하는 식별자 집합과 하나하나 견준다. 묶음, 주 모듈, Go 도구 사슬,
+	// Go 런타임, buildinfo의 의존 모듈이다. 그 밖의 것은 어떤 이름을 달았든 거절한다.
+	// SPDX 식별자는 문서 안에서 하나여야 하므로 같은 것이 둘이면 거절한다. tar 안의
+	// 겹친 이름을 보는 것과는 다른 자리다.
+	allowed := map[string]bool{idBundle: true, idMain: true, idGo: true, idStdlib: true}
+	for _, d := range b.deps {
+		allowed[spdxID("Package", d.path)] = true
+	}
+	ids := map[string]bool{}
 	pk := map[string]pkg{}
 	for _, p := range doc.Packages {
+		if ids[p.ID] {
+			note("SBOM에 같은 식별자가 둘 있다: %s", p.ID)
+			continue
+		}
+		ids[p.ID] = true
+		if !allowed[p.ID] {
+			note("계약에도 buildinfo에도 없는 Package가 SBOM에 있다: %s (%s)", p.ID, p.Name)
+			continue
+		}
 		pk[p.ID] = p
 	}
 	bundle, ok := pk[idBundle]
@@ -835,6 +1085,9 @@ func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]str
 		if bundle.Name != s.bundle() || bundle.Version != s.version {
 			note("묶음 Package의 이름이나 판이 다르다: %s %s", bundle.Name, bundle.Version)
 		}
+		if bundle.LicenseDeclared != s.license || bundle.LicenseConcluded != expr {
+			note("묶음 Package의 라이선스가 다르다. declared %s, concluded %s, 기대 %s와 %s", bundle.LicenseDeclared, bundle.LicenseConcluded, s.license, expr)
+		}
 	}
 	main, ok := pk[idMain]
 	switch {
@@ -851,12 +1104,28 @@ func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]str
 		if len(main.ExternalRefs) != 1 || main.ExternalRefs[0].Locator != want {
 			note("주 모듈의 purl이 다르다: 기대 %s", want)
 		}
+		if main.LicenseConcluded != s.license || main.LicenseDeclared != s.license {
+			note("주 모듈의 라이선스가 %s이 아니다", s.license)
+		}
+		if got := revisionOf(main.Comment); got != s.commit {
+			note("주 모듈의 주석에 적힌 커밋이 다르다. SBOM %q, 기대 %s", got, s.commit)
+		}
+		if !strings.Contains(main.Comment, ". 주 패키지 "+s.pkgPath) {
+			note("주 모듈의 주석에 주 패키지 경로가 없다: %s", s.pkgPath)
+		}
+	}
+	goVer := strings.TrimPrefix(b.goVersion, "go")
+	gt, ok := pk[idGo]
+	if !ok || gt.Version != goVer || gt.LicenseConcluded != goLicense {
+		note("Go 도구 사슬 Package가 없거나 판이나 라이선스가 다르다")
 	}
 	std, ok := pk[idStdlib]
-	if !ok || std.Version != strings.TrimPrefix(b.goVersion, "go") {
-		note("Go 도구 사슬 정보가 없거나 buildinfo와 다르다")
+	switch {
+	case !ok || std.Version != goVer || std.LicenseConcluded != goLicense:
+		note("Go 런타임 Package가 없거나 판이나 라이선스가 다르다")
+	case !strings.Contains(std.Comment, "LICENSE sha256 "+goHash):
+		note("Go 런타임 Package의 주석에 적힌 LICENSE 해시가 고지 문서의 Go 원문과 다르다")
 	}
-	// 의존 모듈 집합
 	rels := map[string]map[string]bool{} // type → from|to
 	for _, r := range doc.Relationships {
 		if rels[r.Type] == nil {
@@ -864,10 +1133,10 @@ func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]str
 		}
 		rels[r.Type][r.From+"|"+r.To] = true
 	}
-	depIDs := map[string]bool{}
+	binID := spdxID("File", s.binary())
+	// 의존 모듈 집합
 	for _, d := range b.deps {
 		id := spdxID("Package", d.path)
-		depIDs[id] = true
 		p, ok := pk[id]
 		if !ok {
 			note("의존 모듈이 SBOM에 없다: %s@%s", d.path, d.version)
@@ -879,28 +1148,46 @@ func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]str
 		if p.LicenseConcluded != lic[d.path+"@"+d.version] {
 			note("의존 모듈의 라이선스가 고지 문서와 다르다: %s", d.path)
 		}
-		if !strings.Contains(p.Comment, "go.sum "+d.sum) {
-			note("의존 모듈의 go.sum 해시가 주석에 없다: %s", d.path)
+		got := strings.TrimPrefix(p.Comment, "go.sum ")
+		if i := strings.Index(got, ". "); i >= 0 {
+			got = got[:i]
+		}
+		if !strings.HasPrefix(p.Comment, "go.sum ") || got != d.sum {
+			note("의존 모듈의 go.sum 해시가 주석에 없거나 다르다: %s", d.path)
+		}
+		if d.orig != "" && !strings.Contains(p.Comment, replacedNote(d)) {
+			note("의존 모듈의 교체 정보가 주석에 없다: %s", d.path)
+		}
+		if d.orig == "" && strings.Contains(p.Comment, "바꿔 넣었다") {
+			note("바꾸지 않은 의존 모듈에 교체 정보가 있다: %s", d.path)
 		}
 		if !rels["STATIC_LINK"][idMain+"|"+id] {
 			note("주 모듈이 의존 모듈을 STATIC_LINK하지 않는다: %s", d.path)
 		}
 	}
-	for id, p := range pk {
-		if strings.HasPrefix(id, "SPDXRef-Package-") && id != idBundle && id != idMain && id != idStdlib && !depIDs[id] {
-			note("buildinfo에 없는 모듈이 SBOM에 있다: %s", p.Name)
-		}
-	}
 	if !rels["STATIC_LINK"][idMain+"|"+idStdlib] {
-		note("주 모듈이 Go 도구 사슬을 STATIC_LINK하지 않는다")
+		note("주 모듈이 Go 런타임을 STATIC_LINK하지 않는다")
 	}
-	if !rels["GENERATED_FROM"][spdxID("File", s.binary())+"|"+idMain] {
+	if !rels["BUILD_TOOL_OF"][idGo+"|"+binID] {
+		note("Go 도구 사슬이 실행 파일의 BUILD_TOOL_OF가 아니다")
+	}
+	if !rels["GENERATED_FROM"][binID+"|"+idMain] {
 		note("실행 파일이 주 모듈에서 GENERATED_FROM이 아니다")
 	}
-	// 파일 집합과 해시
+	// 파일 집합과 해시와 라이선스. 같은 파일이 둘이거나 식별자가 겹치면 거절한다.
 	fl := map[string]file{}
 	for _, f := range doc.Files {
-		fl[strings.TrimPrefix(f.Name, "./")] = f
+		name := strings.TrimPrefix(f.Name, "./")
+		if _, dup := fl[name]; dup {
+			note("SBOM에 같은 파일이 둘 있다: %s", name)
+			continue
+		}
+		if ids[f.ID] {
+			note("SBOM에 같은 식별자가 둘 있다: %s", f.ID)
+			continue
+		}
+		ids[f.ID] = true
+		fl[name] = f
 	}
 	for _, e := range entries {
 		if e.name == sbomName {
@@ -917,6 +1204,9 @@ func checkDoc(doc document, s spec, entries []entry, b build, lic map[string]str
 		}
 		if sums["SHA1"] != e.sha1 || sums["SHA256"] != e.sha256 {
 			note("파일의 해시가 다르다: %s", e.name)
+		}
+		if want, _ := fileLicense(e.name, s, expr); f.LicenseConcluded != want {
+			note("파일의 라이선스가 계약과 다르다: %s (%s, 기대 %s)", e.name, f.LicenseConcluded, want)
 		}
 		if !rels["CONTAINS"][idBundle+"|"+f.ID] {
 			note("묶음 Package가 파일을 CONTAINS하지 않는다: %s", e.name)
