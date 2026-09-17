@@ -21,7 +21,6 @@ MAC_B=52:54:00:c5:01:0b
 IP_A=10.97.0.10
 IP_B=10.97.0.30
 PORT=51820
-DOMAIN=cs.inst.internal
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -178,16 +177,12 @@ config() { # 로컬디렉터리 peer-id 터널IP 자기공개키
   cat > "$WORK/$1/csa.toml" <<TOML
 peer-id     = "$2"
 private-key = "/etc/callsignet/private.key"
-domain      = "$DOMAIN"
 tunnel-cidr = "10.96.0.0/24"
 listen-port = $PORT
 
 [tun]
 name = "cs0"
 mtu  = 1420
-
-[dns]
-listen = "127.0.53.1:53"
 TOML
   cat > "$WORK/$1/peers.toml" <<TOML
 [[peer]]

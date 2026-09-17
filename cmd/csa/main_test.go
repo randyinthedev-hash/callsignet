@@ -15,7 +15,7 @@ import (
 
 	"github.com/randyinthedev-hash/callsignet/internal/config"
 	"github.com/randyinthedev-hash/callsignet/internal/guard"
-	"github.com/randyinthedev-hash/callsignet/internal/name"
+	"github.com/randyinthedev-hash/callsignet/internal/nat"
 )
 
 // TestWriteSecret이미있으면만들지않는다는 쓰던 신원 키를 조용히 덮어쓰지 않게
@@ -164,13 +164,13 @@ func TestWaitStop(t *testing.T) {
 	t.Run("반쯤 걸리면 규칙을 남기고 멈춘다", func(t *testing.T) {
 		mixed := make(chan struct{}, 1)
 		mixed <- struct{}{}
-		gd := &fakeGuard{}
-		err := waitStop(make(chan os.Signal), mixed, gd, quiet)
+		gd, nt := &fakeGuard{}, &fakeGuard{}
+		err := waitStop(make(chan os.Signal), mixed, []keeper{gd, nt}, quiet)
 		if !errors.Is(err, errMixed) {
 			t.Fatalf("멈추는 까닭을 알리지 않는다: %v", err)
 		}
-		if gd.kept != 1 {
-			t.Fatalf("직통 경로 규칙을 남기지 않았다: %d", gd.kept)
+		if gd.kept != 1 || nt.kept != 1 {
+			t.Fatalf("두 표를 남기지 않았다: 직통 경로 %d, 주소 바꾸기 %d", gd.kept, nt.kept)
 		}
 	})
 
@@ -178,7 +178,7 @@ func TestWaitStop(t *testing.T) {
 		stop := make(chan os.Signal, 1)
 		stop <- syscall.SIGTERM
 		gd := &fakeGuard{}
-		if err := waitStop(stop, make(chan struct{}), gd, quiet); err != nil {
+		if err := waitStop(stop, make(chan struct{}), []keeper{gd}, quiet); err != nil {
 			t.Fatalf("신호로 멈추는데 오류가 났다: %v", err)
 		}
 		if gd.kept != 0 {
@@ -192,14 +192,15 @@ type fakeDevice struct{ reloads int }
 
 func (d *fakeDevice) Reload(*config.Config) error { d.reloads++; return nil }
 
-type fakeResolver struct{ sets int }
-
-func (r *fakeResolver) SetTable(*name.Table) { r.sets++ }
-
 type fakeGate struct{ checks, applies int }
 
 func (g *fakeGate) Check(guard.Config) error { g.checks++; return nil }
 func (g *fakeGate) Apply(guard.Config) error { g.applies++; return nil }
+
+type fakeRewriter struct{ checks, applies int }
+
+func (r *fakeRewriter) Check(nat.Config) error { r.checks++; return nil }
+func (r *fakeRewriter) Apply(nat.Config) error { r.applies++; return nil }
 
 // 정해진 값에서 키 짝을 만든다.
 func keyPair(t *testing.T, fill byte) (priv, pub string) {
@@ -232,16 +233,12 @@ func configDir(t *testing.T) (dir string, writePSK func(fill byte)) {
 	}
 	write("csa.toml", fmt.Sprintf(`peer-id     = "srv-a"
 private-key = %q
-domain      = "cs.test.internal"
 tunnel-cidr = "10.91.0.0/24"
 listen-port = 51820
 
 [tun]
 name = "cs0"
 mtu  = 1420
-
-[dns]
-listen = "127.0.53.1:53"
 
 [psk]
 dir  = %q
@@ -309,8 +306,8 @@ func TestReload사전공유키를바꾸면다시건다(t *testing.T) {
 	// TOML은 그대로 두고 키만 다른 유효한 값으로 바꾼다.
 	writePSK(2)
 
-	dev, res, gd := &fakeDevice{}, &fakeResolver{}, &fakeGate{}
-	report, err := reload(dir, &live, dev, res, gd, quiet)
+	dev, gd, nt := &fakeDevice{}, &fakeGate{}, &fakeRewriter{}
+	report, err := reload(dir, &live, dev, gd, nt, quiet)
 	if err != nil {
 		t.Fatalf("다시 읽지 못했다: %v", err)
 	}
@@ -319,6 +316,9 @@ func TestReload사전공유키를바꾸면다시건다(t *testing.T) {
 	}
 	if gd.applies != 1 {
 		t.Fatalf("직통 경로 규칙을 다시 걸지 않았다: %d", gd.applies)
+	}
+	if nt.checks != 1 || nt.applies != 1 {
+		t.Fatalf("주소 바꾸기 표를 먼저 보고 다시 걸어야 한다: 본 것 %d, 건 것 %d", nt.checks, nt.applies)
 	}
 	if !strings.Contains(report, "사전 공유키를 바꾼 상대: srv-b") {
 		t.Fatalf("무엇이 바뀌었는지 알리지 않았다: %q", report)
@@ -331,7 +331,7 @@ func TestReload사전공유키를바꾸면다시건다(t *testing.T) {
 	}
 
 	// 아무것도 바꾸지 않으면 다시 걸지 않는다.
-	report, err = reload(dir, &live, dev, res, gd, quiet)
+	report, err = reload(dir, &live, dev, gd, nt, quiet)
 	if err != nil {
 		t.Fatalf("다시 읽지 못했다: %v", err)
 	}

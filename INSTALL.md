@@ -100,16 +100,16 @@ cd csa-linux-amd64
 
 ## 서비스 계정과 권한
 
-**csa는 root로 돈다.** TUN 인터페이스를 만들고, 터널 IP와 경로를 넣고, nftables 표를 걸고, `/etc/resolv.conf`를 고치거나 systemd-resolved에 등록하는 데 그 권한이 필요하다. 권한을 내려놓는 것은 아직 만들지 않았다.
+**csa는 root로 돈다.** TUN 인터페이스를 만들고, 터널 IP와 경로를 넣고, nftables 표 둘을 거는 데 그 권한이 필요하다. 권한을 내려놓는 것은 아직 만들지 않았다.
 
-그 대신 `csa.service`가 손댈 자리를 좁힌다. `/usr`와 `/boot`는 읽기 전용이고, 홈 디렉터리는 보이지 않고, 장치는 `/dev/net/tun`만 보이며, 새 권한을 얻지 못한다. `/etc`는 그대로 둔다. csa가 `/etc/resolv.conf`를 고치기 때문이다.
+그 대신 `csa.service`가 손댈 자리를 좁힌다. `/usr`와 `/boot`와 `/etc`는 읽기 전용이고, 홈 디렉터리는 보이지 않고, 장치는 `/dev/net/tun`만 보이며, 새 권한을 얻지 못한다. csa는 `/etc`를 읽기만 한다. 0.1.x는 `/etc/resolv.conf`를 고치느라 `/etc`를 열어 두었다.
 
 csa는 비밀 파일을 읽을 때 그 파일이 일반 파일인지, 임자가 root인지, 다른 사용자가 읽을 수 있는지, 그 파일이 놓인 자리를 다른 사용자가 고칠 수 있는지 본다. 위 표의 권한대로 두면 지난다. 그보다 느슨하면 csa는 어느 파일이 어떻게 어긋났는지 적고 뜨지 않는다.
 
 ## 준비물
 
 - 리눅스. systemd가 있어야 한다.
-- nftables의 `nft` 명령. Ubuntu에는 처음부터 있고 RHEL 계열은 `dnf install nftables`로 설치한다. 직통 경로를 닫지 않으려면 `csa.toml`에 `guard.mode = "off"`를 둔다.
+- nftables의 `nft` 명령. Ubuntu에는 처음부터 있고 RHEL 계열은 `dnf install nftables`로 설치한다. csa는 직통 경로를 닫는 표와 실제 IP와 터널 IP를 서로 바꾸는 표를 이 명령으로 건다. 둘 다 걸지 않으려면 `csa.toml`에 `guard.mode = "off"`와 `nat.outgoing = "off"`, `nat.incoming = "tunnel-ip"`를 둔다.
 - RHEL 계열은 firewalld가 wg 포트를 막는다. `firewall-cmd --add-port=51820/udp --permanent && firewall-cmd --reload`로 연다.
 
 ## 처음 설치
@@ -174,13 +174,15 @@ sudo csa status -c /etc/callsignet
 | 상태를 본다 | `csa status -c /etc/callsignet` |
 | 로그를 본다 | `journalctl -u csa` |
 
-멈추면 csa가 터널을 닫고, 직통 경로 규칙을 지우고, 이름 해석 설정을 되돌린다. 20초 안에 끝나지 않으면 systemd가 끊는다.
+멈추면 csa가 터널을 닫고, 직통 경로 규칙과 주소 바꾸기 표를 지운다. 20초 안에 끝나지 않으면 systemd가 끊는다.
 
 **csa가 스스로 멈추는 자리가 하나 있다.** 설정을 다시 읽다 실패하고 되돌리지도 못하면 csa는 터널을 닫고 0이 아닌 값으로 끝난다. 그때 직통 경로 규칙은 일부러 남긴다. `csa.service`의 `Restart=on-failure`가 csa를 다시 띄우고, 다시 뜬 csa는 설정 파일에서 처음부터 다시 건다. 이것이 설계 문서의 「되돌리지도 못하면 csa는 멈춘다」가 전제하는 것이다.
 
 다시 띄워도 곧바로 또 죽기를 10초 안에 다섯 번 되풀이하면 systemd가 그 유닛의 기동을 막는다. `systemctl status csa`에 `start-limit-hit`가 보인다. 까닭을 고친 뒤 `systemctl reset-failed csa`로 풀고 `systemctl start csa`를 한다. `install.sh`는 판을 옮기며 다시 띄우기 전에 이것을 스스로 푼다. 앞 판이 되풀이해 죽은 값을 좋은 판이 치르지 않게 하려는 것이다.
 
-`peers.toml`과 `policy.toml`과 사전 공유키는 도는 중에 갈아 끼우고 `reload`를 하면 된다. `csa.toml`은 그럴 수 없다. 거기 적힌 값은 TUN 인터페이스와 개인키와 리슨 주소를 정한다. 그것을 바꾸면 `systemctl restart csa`를 한다.
+`peers.toml`과 `policy.toml`과 사전 공유키는 도는 중에 갈아 끼우고 `reload`를 하면 된다. `csa.toml`은 그럴 수 없다. 거기 적힌 값은 TUN 인터페이스와 개인키와 리슨 주소와 앱에 보이는 주소의 모드를 정한다. 그것을 바꾸면 `systemctl restart csa`를 한다.
+
+**0.1.x에서 올리는 경우.** 0.2.0의 csa는 이름을 풀지 않는다. `csa.toml`의 `domain`과 `[dns]`는 더 쓰지 않는다. 0.2.x의 csa는 그 줄이 남아 있어도 알리기만 하고 뜨므로 올린 뒤에 지우면 된다. 0.3.0부터는 거절한다. 앱이 `app.peer-id.내부도메인`으로 상대를 부르고 있었으면, 그 이름을 회사 DNS에 두거나 앱이 상대의 실제 IP로 부르게 한다. 앱이 실제 IP로 부르는 연결은 csa가 터널로 돌린다.
 
 ## 올리기
 

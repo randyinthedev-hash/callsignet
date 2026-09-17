@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/randyinthedev-hash/callsignet/internal/nft"
 )
 
 func base() Config {
@@ -129,18 +131,6 @@ func TestParseMode(t *testing.T) {
 	}
 }
 
-func TestCountOf(t *testing.T) {
-	out := []byte(`{"nftables":[{"metainfo":{"version":"1.0.9"}},` +
-		`{"counter":{"family":"inet","name":"blocked","table":"callsignet",` +
-		`"handle":1,"packets":12,"bytes":720}}]}`)
-	if got := countOf(out); got != 12 {
-		t.Errorf("12여야 하는데 %d", got)
-	}
-	if got := countOf([]byte("JSON이 아니다")); got != 0 {
-		t.Errorf("읽지 못하면 0이어야 하는데 %d", got)
-	}
-}
-
 // fakeNft는 PATH에 가짜 nft를 놓고 그것이 받은 인자와 표준 입력을 적어 둔다.
 // 진짜 nft는 root가 있어야 돌므로 단위 시험에서 쓸 수 없다.
 //
@@ -175,13 +165,13 @@ func fakeNft(t *testing.T, listExit, exitCode int, stderr string) (calls func() 
 	}
 }
 
-// noNft는 nft를 찾지 못하는 자리를 만든다. PATH만 비워서는 모자라다. findNft가
+// noNft는 nft를 찾지 못하는 자리를 만든다. PATH만 비워서는 모자라다. nft.Find가
 // /usr/sbin과 /sbin도 보는데 시험을 돌리는 머신에 그것이 있을 수 있다.
 func noNft(t *testing.T) {
 	t.Helper()
-	old := lookNft
-	lookNft = func() (string, error) { return "", errors.New("nft를 찾지 못했다") }
-	t.Cleanup(func() { lookNft = old })
+	old := nft.Look
+	nft.Look = func() (string, error) { return "", errors.New("nft를 찾지 못했다") }
+	t.Cleanup(func() { nft.Look = old })
 }
 
 // said는 로그로 찍힌 문구를 모은다.

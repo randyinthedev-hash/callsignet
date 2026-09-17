@@ -44,9 +44,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # csa는 nftables로 직통 경로를 닫고, 시험은 dig로 이름 해석을 확인한다.
+      # csa는 nftables로 직통 경로를 닫고 실제 IP와 터널 IP를 서로 바꾼다.
       - name: 준비물을 설치한다
-        run: sudo apt-get update -qq && sudo apt-get install -yqq nftables dnsutils
+        run: sudo apt-get update -qq && sudo apt-get install -yqq nftables
 
       # 러너에 도커가 있으면 br_netfilter가 올라와 브리지로 오가는 패킷이
       # iptables의 FORWARD를 지난다. 그 사슬이 기본으로 DROP이면 네임스페이스

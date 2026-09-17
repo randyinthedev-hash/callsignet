@@ -70,10 +70,11 @@ func TestTableAligns(t *testing.T) {
 func TestFormat(t *testing.T) {
 	now := time.Date(2026, 9, 3, 18, 0, 0, 0, time.UTC)
 	s := Status{
-		PeerID: "srv-a", Iface: "cs0", TunnelIP: "10.91.0.1",
-		Domain: "cs.test.internal", Resolver: "직접 관리",
+		PeerID: "srv-a", Iface: "cs0", TunnelIP: "10.91.0.1", RealIP: "10.90.0.1",
 		MTU: 1420, MaxMSS: 1380, Clamped: 3,
 		Guard: "서비스 포트만 닫음", GuardBlocked: 7,
+		NATOutgoing: "서비스 포트로 가는 연결을 터널로 돌림", NATIncoming: "실제 IP",
+		NATSteered: 5, NATPresented: 2,
 		Since: now.Add(-90 * time.Second),
 		Peers: []PeerStatus{
 			{PeerID: "srv-c", TunnelIP: "10.91.0.3"},
@@ -84,8 +85,9 @@ func TestFormat(t *testing.T) {
 	out := Format(s, now)
 	for _, want := range []string{
 		"csa가 돕니다. 기동한 지 1분 30초 지났습니다.",
-		"peer-id srv-a, 인터페이스",
-		"이름 해석 자리를 차지한 방법: 직접 관리",
+		"peer-id srv-a, 인터페이스 cs0, 터널 IP 10.91.0.1, 실제 IP 10.90.0.1",
+		"앱이 실제 IP로 부른 연결: 서비스 포트로 가는 연결을 터널로 돌림. 지금까지 터널로 돌린 연결 5개입니다.",
+		"터널로 온 연결을 앱에 보이는 주소: 실제 IP. 지금까지 실제 IP로 보인 연결 2개입니다.",
 		"MTU 1420, TCP MSS 한도 1380바이트입니다. 지금까지 깎은 횟수 3번입니다.",
 		"직통 경로를 닫는 방법: 서비스 포트만 닫음. 지금까지 막은 패킷 7개입니다.",
 		"10.90.0.2:51820", "12초 전", "1.5 KiB", "512 B", "있음",

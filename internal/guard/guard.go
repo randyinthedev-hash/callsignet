@@ -10,13 +10,13 @@
 package guard
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/netip"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
+
+	"github.com/randyinthedev-hash/callsignet/internal/nft"
 )
 
 const (
@@ -159,26 +159,6 @@ type Guard struct {
 	logf      func(string, ...any)
 }
 
-// findNft는 nft 명령을 찾는다. PATH에서 먼저 찾고, 없으면 sbin 자리들을 본다.
-// RHEL 계열은 서비스나 SSH로 바로 띄운 명령의 PATH에 /usr/sbin을 넣지 않는다.
-// csa가 어디서 뜨든 같은 자리를 보아야 한다.
-func findNft() (string, error) {
-	if p, err := exec.LookPath("nft"); err == nil {
-		return p, nil
-	}
-	for _, p := range []string{"/usr/sbin/nft", "/sbin/nft", "/usr/local/sbin/nft"} {
-		if st, err := os.Stat(p); err == nil && st.Mode()&0o111 != 0 {
-			return p, nil
-		}
-	}
-	return "", fmt.Errorf("nft를 찾지 못했다. nftables를 설치하거나" +
-		" csa.toml에 guard.mode = \"off\"를 두라")
-}
-
-// lookNft는 nft를 찾는다. 시험이 갈아 끼울 수 있게 변수로 둔다. 시험 머신에
-// /usr/sbin/nft가 있으면 「찾지 못한 자리」를 다른 방법으로 만들 수 없다.
-var lookNft = findNft
-
 func New(logf func(string, ...any)) *Guard {
 	return &Guard{logf: logf}
 }
@@ -193,11 +173,11 @@ func (g *Guard) Check(c Config) error {
 	if c.Mode == ModeOff {
 		return nil
 	}
-	nft, err := lookNft()
+	path, err := nft.Look()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(nft, "-c", "-f", "-")
+	cmd := exec.Command(path, "-c", "-f", "-")
 	cmd.Stdin = strings.NewReader(Ruleset(c))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("nft가 이 규칙을 받아들이지 않는다: %v (%s)", err, strings.TrimSpace(string(out)))
@@ -232,13 +212,13 @@ func (g *Guard) Apply(c Config) error {
 			" 이 머신의 서비스 포트는 터널 밖에서도 열려 있습니다.")
 		return nil
 	}
-	nft, err := lookNft()
+	path, err := nft.Look()
 	if err != nil {
 		return err
 	}
-	g.nft = nft
+	g.nft = path
 	g.unchecked = false
-	cmd := exec.Command(nft, "-f", "-")
+	cmd := exec.Command(path, "-f", "-")
 	cmd.Stdin = strings.NewReader(Ruleset(c))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("직통 경로를 닫지 못했다: %v (%s)", err, strings.TrimSpace(string(out)))
@@ -299,15 +279,15 @@ func (g *Guard) tell(c Config) {
 // 지울 때는 만들고 지우는 배치를 쓴다. 표가 없어도 nft가 잘못이라고 답하지
 // 않으므로 「그런 표가 없다」는 답을 문구로 가리지 않아도 된다.
 func removeTable(logf func(string, ...any)) (bool, error) {
-	nft, err := lookNft()
+	path, err := nft.Look()
 	if err != nil {
 		return false, nil
 	}
 	// 지우기 전에 표가 있었는지 본다. 배치는 표가 없어도 성공하므로 배치의
 	// 결과만으로는 무엇을 지웠는지 알 수 없다. 여기서는 나가는 값이 아니라
 	// 명령이 끝난 값만 본다.
-	had := exec.Command(nft, "list", "table", "inet", tableName).Run() == nil
-	cmd := exec.Command(nft, "-f", "-")
+	had := exec.Command(path, "list", "table", "inet", tableName).Run() == nil
+	cmd := exec.Command(path, "-f", "-")
 	cmd.Stdin = strings.NewReader(dropTable())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return false, fmt.Errorf("남아 있는 직통 경로 규칙을 지우지 못했다: %v (%s)",
@@ -366,25 +346,5 @@ func (g *Guard) Blocked() uint64 {
 	if err != nil {
 		return 0
 	}
-	return countOf(out)
-}
-
-// countOf는 nft가 내놓은 JSON에서 계수기 값을 뽑는다.
-func countOf(b []byte) uint64 {
-	var doc struct {
-		Nftables []struct {
-			Counter struct {
-				Packets uint64 `json:"packets"`
-			} `json:"counter"`
-		} `json:"nftables"`
-	}
-	if err := json.Unmarshal(b, &doc); err != nil {
-		return 0
-	}
-	for _, item := range doc.Nftables {
-		if item.Counter.Packets > 0 {
-			return item.Counter.Packets
-		}
-	}
-	return 0
+	return nft.Count(out)
 }

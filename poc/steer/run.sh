@@ -8,9 +8,10 @@
 # 출발지를 상대의 실제 IP로 바꾼다. 그러면 앱은 상대를 실제 IP로 본다. 커널의
 # 연결 추적이 되돌아가는 패킷의 주소를 되돌린다.
 #
-# csa는 아직 이 규칙을 만들지 않는다. 이 스크립트가 nftables NAT 표를 손으로
-# 걸고 그 주장을 관측한다. 스크립트가 네임스페이스 둘을 만들어 브리지로 잇고,
-# 각 네임스페이스에서 지금의 csa를 띄운 뒤, 앱이 상대의 실제 IP로 부른다.
+# csa도 이 표를 만들지만, 이 실험은 csa의 표를 끄고 스크립트가 nftables NAT 표를
+# 손으로 건다. 커널의 동작을 csa의 구현과 무관하게 관측하려는 것이다. 스크립트가
+# 네임스페이스 둘을 만들어 브리지로 잇고, 각 네임스페이스에서 csa를 띄운 뒤, 앱이
+# 상대의 실제 IP로 부른다.
 set -euo pipefail
 
 # csa는 개인키가 놓인 자리와 그 위의 모든 디렉터리를 다른 사용자가 고칠 수 없어야
@@ -78,7 +79,6 @@ cleanup() {
        ! ip link show "$BR" >/dev/null 2>&1; then break; fi
     sleep 0.2
   done
-  rm -rf "/etc/netns/$NS_A" "/etc/netns/$NS_B"
 }
 trap cleanup EXIT
 cleanup
@@ -104,12 +104,6 @@ attach() { # ns addr
 }
 attach "$NS_A" "$IP_A"
 attach "$NS_B" "$IP_B"
-# 지금의 csa는 리졸버 자리를 차지하려고 /etc/resolv.conf를 고친다. 네임스페이스에
-# 자기 파일을 주어 호스트의 파일을 건드리지 않게 한다.
-for ns in "$NS_A" "$NS_B"; do
-  mkdir -p "/etc/netns/$ns"
-  echo "nameserver 10.90.1.253" > "/etc/netns/$ns/resolv.conf"
-done
 if ! nsa ping -c 2 -W 2 "$IP_B" >/dev/null 2>&1; then
   echo "언더레이가 통하지 않습니다. 터널 이전의 문제입니다." >&2
   echo "브리지로 오가는 패킷이 방화벽에 막히는지 보십시오: sysctl net.bridge.bridge-nf-call-iptables" >&2
@@ -151,7 +145,6 @@ side() { # dir peer-id
   cat > "$WORK/$1/csa.toml" <<TOML
 peer-id     = "$2"
 private-key = "$WORK/$1/private.key"
-domain      = "cs.test.internal"
 tunnel-cidr = "$CIDR"
 listen-port = $PORT
 
@@ -159,8 +152,10 @@ listen-port = $PORT
 name = "$WG_IF"
 mtu  = 1420
 
-[dns]
-listen = "127.0.53.1:53"
+# csa의 표는 끈다. 이 스크립트가 손으로 건 표만 남게 하려는 것이다.
+[nat]
+outgoing = "off"
+incoming = "tunnel-ip"
 TOML
 }
 side a srv-a
@@ -517,7 +512,7 @@ REPORT="$RESULTS/steer-$TS.md"
 {
   echo "# 실제 IP로 부른 연결을 터널로 돌리기 ($TS)"
   echo
-  echo "커밋 $(git -C "$REPO" rev-parse --short HEAD). csa는 이 규칙을 만들지 않는다. 시험 스크립트가 nftables NAT 표를 손으로 걸었다. 역경로 검사는 엄격(rp_filter=1)이다."
+  echo "커밋 $(git -C "$REPO" rev-parse --short HEAD). csa의 표는 끄고 시험 스크립트가 nftables NAT 표를 손으로 걸었다. 역경로 검사는 엄격(rp_filter=1)이다."
   echo
   echo "| 검사 | 결과 |"
   echo "|---|---|"

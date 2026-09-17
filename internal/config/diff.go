@@ -96,10 +96,14 @@ func changedPSK(old, cur *Config) []string {
 
 // sameSelf는 csa.toml에서 온 값이 같은지 본다. Guard가 슬라이스를 담고 있어
 // 구조체끼리 그냥 견줄 수 없다.
+//
+// 더 쓰지 않는 열쇠(domain, [dns])는 견주지 않는다. 운영자가 그 줄을 지우고
+// csa reload를 했을 때 「csa.toml이 바뀌었다」고 다시 띄우라 하면 지우지 말라는
+// 말이 된다.
 func sameSelf(a, b Self) bool {
-	if a.PeerID != b.PeerID || a.PrivateKey != b.PrivateKey || a.Domain != b.Domain ||
+	if a.PeerID != b.PeerID || a.PrivateKey != b.PrivateKey ||
 		a.TunnelCIDR != b.TunnelCIDR || a.ListenPort != b.ListenPort ||
-		a.Tun != b.Tun || a.DNS != b.DNS || a.Guard.Mode != b.Guard.Mode ||
+		a.Tun != b.Tun || a.Guard.Mode != b.Guard.Mode || a.NAT != b.NAT ||
 		a.PSK != b.PSK {
 		return false
 	}
@@ -130,7 +134,7 @@ func samePeer(a, b Peer) bool {
 	if a.PublicKey != b.PublicKey || a.TunnelIP != b.TunnelIP {
 		return false
 	}
-	if !sameStrings(a.Endpoints, b.Endpoints) {
+	if !sameStrings(a.Endpoints, b.Endpoints) || !sameStrings(a.Addresses, b.Addresses) {
 		return false
 	}
 	if len(a.Services) != len(b.Services) {

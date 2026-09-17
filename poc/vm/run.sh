@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# 실제 VM 둘에서 csa를 돌려 리졸버 자리 차지하기를 확인한다.
+# 실제 VM 둘에서 csa를 돌려 네임스페이스가 밟지 못하는 것을 확인한다.
 #
-# 네임스페이스로 하는 통합 시험이 밟지 못하는 것을 여기서 밟는다. Ubuntu에는
-# systemd-resolved가 돌고 Rocky에는 NetworkManager가 돈다. 두 머신에서 csa가
-# 어느 갈래를 타고 이름이 실제로 풀리는지 본다. 터널도 진짜 머신 둘 사이에서
-# 처음으로 확인한다.
+# 진짜 NIC에서 커널이 목적지가 바뀐 패킷의 경로를 다시 찾는지, 엄격한 역경로
+# 검사에서도 되돌아가는 패킷이 지나는지 본다. Ubuntu에는 systemd-resolved가 돌고
+# Rocky에는 NetworkManager와 firewalld가 돈다. csa가 그 셋을 건드리지 않고 자기
+# 표 둘만 걸고 지우는지 본다. 터널도 진짜 머신 둘 사이에서 확인한다.
 set -euo pipefail
 
 NET=cs-vmnet
 VM_A=cs-vm-a          # Ubuntu 24.04. systemd-resolved가 돈다
-VM_B=cs-vm-b          # Rocky 9. NetworkManager가 돈다
+VM_B=cs-vm-b          # Rocky 9. NetworkManager와 firewalld가 돈다
 MAC_A=52:54:00:c5:00:0a
 MAC_B=52:54:00:c5:00:0b
 IP_A=10.98.0.10       # 언더레이
@@ -18,7 +18,6 @@ WG_A=10.99.0.1        # 터널
 WG_B=10.99.0.2
 CIDR=10.99.0.0/24
 PORT=51820
-DOMAIN=cs.vm.internal
 APP_A=billing
 APP_B=report
 
@@ -245,16 +244,12 @@ side() { # 로컬디렉터리 peer-id 내앱 상대 상대앱
   cat > "$WORK/$1/csa.toml" <<TOML
 peer-id     = "$2"
 private-key = "/etc/callsignet/private.key"
-domain      = "$DOMAIN"
 tunnel-cidr = "$CIDR"
 listen-port = $PORT
 
 [tun]
 name = "cs0"
 mtu  = 1420
-
-[dns]
-listen = "127.0.53.1:53"
 TOML
   cat > "$WORK/$1/policy.toml" <<TOML
 outbound = ["$4/$5"]
@@ -279,10 +274,18 @@ push "$IP_A" a a.key
 push "$IP_B" b b.key
 
 echo "== 기동 전 리졸버"
+# csa는 이 파일을 건드리지 않아야 한다. 기동 전의 내용을 적어 두고 뒤에 견준다.
 for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
   set -- $pair
   printf '  %-12s %s\n' "$2" "$($SSH "root@$1" 'ls -l /etc/resolv.conf | sed "s/.*resolv.conf/resolv.conf/"')"
   $SSH "root@$1" 'cat /etc/resolv.conf | grep -v "^#" | grep . | head -3' | sed 's/^/               /'
+done
+RESOLV_A0=$($SSH "root@$IP_A" 'cat /etc/resolv.conf')
+RESOLV_B0=$($SSH "root@$IP_B" 'cat /etc/resolv.conf')
+# 역경로 검사를 엄격하게 둔다. 받는 쪽 표가 출발지를 라우팅 뒤에 바꾸므로 이
+# 검사에 걸리지 않아야 한다. Ubuntu의 기본은 느슨(2)이다.
+for h in "$IP_A" "$IP_B"; do
+  $SSH "root@$h" 'sysctl -q -w net.ipv4.conf.all.rp_filter=1 net.ipv4.conf.default.rp_filter=1'
 done
 
 echo
@@ -323,50 +326,48 @@ on_b() { $SSH "root@$IP_B" "$1" 2>/dev/null || true; }
 try_a() { $SSH "root@$IP_A" "$1" >/dev/null 2>&1; }
 
 echo
-echo "== A(Ubuntu) 리졸버 갈래"
-if on_a 'grep -q "차지한 방법: systemd-resolved" /var/log/csa.log && echo yes' | grep -q yes; then
-  say ok "systemd-resolved 갈래를 탄다"
-else
-  say 틀림 "systemd-resolved 갈래를 타지 않았다"
-  on_a 'grep -i "차지한 방법\|resolvectl\|이름 해석" /var/log/csa.log' | sed 's/^/        /'
-fi
-if [ -n "$(on_a 'test -L /etc/resolv.conf && echo yes')" ]; then
-  say ok "/etc/resolv.conf를 건드리지 않는다"
-else say 틀림 "파일을 고쳤다"; fi
-if on_a "resolvectl status cs0" | grep -q "$DOMAIN"; then
-  say ok "cs0에 내부 도메인을 등록했다"
-else say 틀림 "도메인을 등록하지 못했다"; on_a "resolvectl status cs0" | sed 's/^/        /'; fi
-if on_a "resolvectl status cs0" | grep -q "99.10.in-addr.arpa"; then
-  say ok "역방향 구역도 등록했다"
-else say 틀림 "역방향 구역이 없다"; fi
-
-echo
-echo "== B(Rocky) 리졸버 갈래"
-echo "  csa가 판별한 것: $(on_b 'grep "차지한 방법:" /var/log/csa.log | head -1')"
-if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.53.1"; then
-  say ok "자기를 첫 줄에 넣었다"
-else say 틀림 "파일을 가져가지 못했다"; on_b 'head -5 /etc/resolv.conf' | sed 's/^/        /'; fi
-
-echo
-echo "== 이름 해석"
-if [ "$(on_a "getent hosts $APP_B.vm-b.$DOMAIN | awk '{print \$1}'")" = "$WG_B" ]; then
-  say ok "A가 시스템 경로로 B의 서비스 이름을 푼다"
-else say 틀림 "A에서 이름이 풀리지 않는다: $(on_a "getent hosts $APP_B.vm-b.$DOMAIN")"; fi
-if [ "$(on_b "getent hosts $APP_A.vm-a.$DOMAIN | awk '{print \$1}'")" = "$WG_A" ]; then
-  say ok "B가 시스템 경로로 A의 서비스 이름을 푼다"
-else say 틀림 "B에서 이름이 풀리지 않는다: $(on_b "getent hosts $APP_A.vm-a.$DOMAIN")"; fi
-if on_a "getent hosts $WG_B" | grep -q "vm-b.$DOMAIN"; then
-  say ok "A가 역방향으로 B의 머신 이름을 얻는다"
-else say 틀림 "역방향이 풀리지 않는다: $(on_a "getent hosts $WG_B")"; fi
+echo "== 건드리지 않는 것"
+if [ "$(on_a 'cat /etc/resolv.conf')" = "$RESOLV_A0" ] && [ "$(on_b 'cat /etc/resolv.conf')" = "$RESOLV_B0" ]; then
+  say ok "csa가 두 머신의 /etc/resolv.conf를 건드리지 않는다"
+else say 틀림 "csa가 /etc/resolv.conf를 고쳤다"; fi
+if ! on_a "resolvectl status cs0" | grep -qi "DNS Domain\|in-addr.arpa"; then
+  say ok "csa가 systemd-resolved에 아무것도 등록하지 않는다"
+else say 틀림 "systemd-resolved에 등록한 것이 있다"; on_a "resolvectl status cs0" | sed 's/^/        /'; fi
+if ! on_a 'grep -q "이름 해석" /var/log/csa.log && echo yes' | grep -q yes; then
+  say ok "csa가 이름 해석을 하지 않는다"
+else say 틀림 "csa가 이름 해석을 한다고 적었다"; fi
 
 echo
 echo "== 터널"
 if try_a "ping -c 3 -W 2 -I cs0 $WG_B"; then
   say ok "진짜 머신 둘 사이에 터널이 선다"
 else say 틀림 "터널이 서지 않는다"; on_a 'tail -20 /var/log/csa.log' | sed 's/^/        /'; fi
-if try_a "ping -c 2 -W 2 $APP_B.vm-b.$DOMAIN"; then
-  say ok "이름으로 통신한다"
-else say 틀림 "이름으로는 통하지 않는다"; fi
+
+echo
+echo "== 실제 IP로 부른 연결"
+# 서버는 B의 실제 IP 하나에만 듣는다. A의 앱은 B의 실제 IP로 부른다. A의 표가
+# 그 연결을 터널로 돌리고 B의 표가 목적지를 실제 IP로 되돌려야 서버가 받는다.
+$SSH "root@$IP_B" "nohup python3 -c \"
+import socket
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('$IP_B', 8080)); s.listen(1)
+c, peer = s.accept(); c.sendall(b'pong:' + c.recv(64)); print(peer[0], flush=True); c.close()
+\" > /var/log/serve.out 2>&1 &
+sleep 1"
+got=$(on_a "timeout 5 bash -c 'exec 3<>/dev/tcp/$IP_B/8080; printf \"ping\\n\" >&3; head -1 <&3'")
+if [ "$got" = "pong:ping" ]; then
+  say ok "진짜 NIC에서도 실제 IP로 부른 TCP가 터널로 간다"
+else say 틀림 "실제 IP로 TCP가 서지 않는다: ${got:-없음}"; on_a 'tail -10 /var/log/csa.log' | sed 's/^/        /'; fi
+sleep 1
+if on_b 'grep -q "들어온 연결을 받았습니다.*상대 vm-a.*:8080" /var/log/csa.log && echo yes' | grep -q yes; then
+  say ok "받는 쪽 csa의 기록에 peer-id가 남는다. 터널로 왔다"
+else say 틀림 "받는 쪽 csa의 기록에 그 연결이 없다"; fi
+if [ "$(on_b 'head -1 /var/log/serve.out')" = "$IP_A" ]; then
+  say ok "실제 IP에 바인딩한 서버가 받고 상대를 보낸 쪽의 실제 IP로 본다. 엄격한 역경로 검사에서도 그렇다"
+else say 틀림 "서버가 보는 상대 주소가 다르다: $(on_b 'head -1 /var/log/serve.out')"; fi
+if [ "$(on_a 'csa status -c /etc/callsignet -json' | sed -n 's/.*"nat-steered":\([0-9]*\).*/\1/p')" -gt 0 ] 2>/dev/null; then
+  say ok "csa status가 터널로 돌린 연결을 센다"
+else say 틀림 "돌린 연결을 세지 않는다"; fi
 
 echo
 echo "== 직통 경로"
@@ -390,8 +391,11 @@ if on_b 'systemctl is-active firewalld' | grep -q '^active'; then
   say ok "firewalld가 함께 돌고 있다"
 else say 틀림 "firewalld가 돌지 않는다. 함께 도는 것을 보지 못했다"; fi
 if on_b 'nft list table inet callsignet >/dev/null 2>&1 && echo yes' | grep -q yes; then
-  say ok "firewalld의 표 곁에 csa의 표가 있다"
+  say ok "firewalld의 표 곁에 csa의 직통 경로 표가 있다"
 else say 틀림 "csa의 표가 없다"; on_b 'nft list tables' | sed 's/^/        /'; fi
+if on_b 'nft list table ip callsignet-nat >/dev/null 2>&1 && echo yes' | grep -q yes; then
+  say ok "주소 바꾸기 표도 곁에 있다"
+else say 틀림 "주소 바꾸기 표가 없다"; on_b 'nft list tables' | sed 's/^/        /'; fi
 if [ -z "$(knock "$IP_B" 8080)" ]; then
   say ok "firewalld가 8080을 열어 두어도 csa가 직통 경로를 막는다"
 else say 틀림 "실제 IP로 서비스 포트에 붙었다"; fi
@@ -401,39 +405,33 @@ else say 틀림 "적지 않은 포트까지 막았다. firewalld가 막았을 �
 on_b 'pkill -f "serve(9999)"' >/dev/null
 
 echo
-echo "== B의 파일이 남아 있나"
-echo "  30초 기다립니다. NetworkManager가 되돌리는지 봅니다."
-sleep 30
-if on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.53.1"; then
-  say ok "NetworkManager가 되돌리지 않았다"
-else say 틀림 "NetworkManager가 csa의 줄을 지웠다"; on_b 'head -5 /etc/resolv.conf' | sed 's/^/        /'; fi
-
-echo
 echo "== 되돌리기"
 on_a 'pkill -TERM csa'; on_b 'pkill -TERM csa'
 sleep 3
-if ! on_a "resolvectl status cs0" | grep -q "$DOMAIN"; then
-  say ok "A에서 인터페이스와 함께 설정이 사라졌다"
-else say 틀림 "A에 설정이 남았다"; fi
-if ! on_b 'head -3 /etc/resolv.conf' | grep -q "127.0.53.1"; then
-  say ok "B에서 원래 파일로 되돌렸다"
-else say 틀림 "B에 csa의 줄이 남았다"; fi
+if [ -z "$(on_a 'ip link show cs0 2>/dev/null')" ]; then
+  say ok "A에서 인터페이스가 사라졌다"
+else say 틀림 "A에 인터페이스가 남았다"; fi
+if ! on_b 'nft list table ip callsignet-nat >/dev/null 2>&1 && echo yes' | grep -q yes &&
+   ! on_b 'nft list table inet callsignet >/dev/null 2>&1 && echo yes' | grep -q yes; then
+  say ok "B에서 표 둘을 지웠다"
+else say 틀림 "B에 표가 남았다"; on_b 'nft list tables' | sed 's/^/        /'; fi
+if [ "$(on_b 'cat /etc/resolv.conf')" = "$RESOLV_B0" ]; then
+  say ok "멈춘 뒤에도 B의 /etc/resolv.conf는 그대로다"
+else say 틀림 "B의 /etc/resolv.conf가 달라졌다"; fi
 
 echo
 if [ "$VM_OK" != 1 ]; then
   echo "어긋난 것이 있습니다. 남은 것을 봅니다."
   for pair in "$IP_A A(Ubuntu)" "$IP_B B(Rocky)"; do
     set -- $pair
-    echo "--- $2의 resolv.conf ---"
-    $SSH "root@$1" 'ls -l /etc/resolv.conf; cat /etc/resolv.conf' 2>/dev/null | sed 's/^/    /' || true
+    echo "--- $2의 csa 로그 ---"
+    $SSH "root@$1" 'tail -30 /var/log/csa.log' 2>/dev/null | sed 's/^/    /' || true
+    echo "--- $2의 표 ---"
+    $SSH "root@$1" 'nft list table ip callsignet-nat; nft list table inet callsignet' 2>/dev/null | sed 's/^/    /' || true
   done
-  echo "--- A의 resolvectl ---"
-  $SSH "root@$IP_A" 'resolvectl status cs0; resolvectl status | head -20' 2>/dev/null | sed 's/^/    /' || true
-  echo "--- A의 nsswitch ---"
-  $SSH "root@$IP_A" 'grep ^hosts /etc/nsswitch.conf' 2>/dev/null | sed 's/^/    /' || true
   exit 1
 fi
-echo "확인됨. 실제 머신 둘에서 두 갈래가 모두 돈다."
+echo "확인됨. 실제 머신 둘에서 앱이 실제 IP로 부른 연결이 터널로 간다."
 
 # 무엇을 언제 확인했는지 남긴다. 이 시험은 CI에서 돌지 않으므로 기록이 없으면
 # 발행할 때 무엇을 확인했는지 보일 방법이 없다.

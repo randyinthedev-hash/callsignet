@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,13 +22,43 @@ import (
 type Self struct {
 	PeerID     string `toml:"peer-id"`
 	PrivateKey string `toml:"private-key"`
-	Domain     string `toml:"domain"`
 	TunnelCIDR string `toml:"tunnel-cidr"`
 	ListenPort int    `toml:"listen-port"`
 	Tun        Tun    `toml:"tun"`
-	DNS        DNS    `toml:"dns"`
 	Guard      Guard  `toml:"guard"`
+	NAT        NAT    `toml:"nat"`
 	PSK        PSK    `toml:"psk"`
+
+	// Domain과 DNS는 0.1.x의 csa가 이름을 풀 때 쓰던 값이다. 0.2.0부터 csa는
+	// 이름을 풀지 않는다. 이 열쇠를 모르는 열쇠로 거절하면 옛 csa.toml을 가진
+	// 머신이 새 csa로 올라갈 때 모두 멈추므로, 0.2.x에서는 읽되 더 쓰지 않는다고
+	// 알린다. 0.3.0부터 거절한다.
+	Domain string `toml:"domain"`
+	DNS    DNS    `toml:"dns"`
+}
+
+// Deprecated는 더 쓰지 않는 열쇠가 csa.toml에 남아 있으면 그 사실을 돌려준다.
+// 기동을 막지는 않는다.
+func (s Self) Deprecated() []string {
+	var out []string
+	if s.Domain != "" {
+		out = append(out, "csa.toml의 domain은 더 쓰지 않는다. csa는 이름을 풀지 않는다. 지우라")
+	}
+	if s.DNS != (DNS{}) {
+		out = append(out, "csa.toml의 [dns]는 더 쓰지 않는다. csa는 이름을 풀지 않는다. 지우라")
+	}
+	return out
+}
+
+// NAT은 실제 IP와 터널 IP를 서로 바꾸는 표를 어떻게 걸지 정한다.
+//
+// outgoing이 services면 csa는 앱이 상대의 실제 IP와 서비스 포트로 부른 연결을
+// 터널로 돌린다. off면 돌리지 않는다. incoming이 real-ip면 터널로 온 연결을
+// 앱에 실제 IP로 보이고, tunnel-ip면 터널 IP 그대로 보인다. 비워 두면 services와
+// real-ip다.
+type NAT struct {
+	Outgoing string `toml:"outgoing"`
+	Incoming string `toml:"incoming"`
 }
 
 // PSK는 사전 공유키를 어디서 읽고 반드시 있어야 하는지를 정한다.
@@ -83,6 +114,7 @@ func (s Self) TunMTU() int {
 	return s.Tun.MTU
 }
 
+// DNS는 0.1.x의 열쇠다. Self.Deprecated를 보라.
 type DNS struct {
 	Listen string `toml:"listen"`
 	TTL    int    `toml:"ttl"`
@@ -96,11 +128,44 @@ type Service struct {
 
 // Peer는 peers.toml의 항목 하나다. 이 머신 자신도 여기 들어 있다.
 type Peer struct {
-	PeerID    string    `toml:"peer-id"`
-	PublicKey string    `toml:"public-key"`
-	TunnelIP  string    `toml:"tunnel-ip"`
-	Endpoints []string  `toml:"endpoints"`
+	PeerID    string   `toml:"peer-id"`
+	PublicKey string   `toml:"public-key"`
+	TunnelIP  string   `toml:"tunnel-ip"`
+	Endpoints []string `toml:"endpoints"`
+	// Addresses는 앱이 이 머신을 부를 때 쓰는 실제 IP다. Endpoints는 csa가 wg
+	// 패킷을 받는 자리라 뜻이 다르다. 비어 있으면 Endpoints의 IP 부분을 쓴다.
+	Addresses []string  `toml:"addresses"`
 	Services  []Service `toml:"services"`
+}
+
+// RealIPs는 앱이 이 머신을 부를 때 쓰는 실제 IP다. addresses를 적었으면 그것을
+// 읽어 돌려주고, 없으면 endpoints의 IP 부분 가운데 IPv4인 것을 돌려준다. 읽을
+// 수 없는 값은 건너뛴다. 그런 값은 설정 검사가 따로 잡는다.
+func (p Peer) RealIPs() []netip.Addr {
+	var out []netip.Addr
+	seen := map[netip.Addr]bool{}
+	add := func(a netip.Addr) {
+		a = a.Unmap()
+		if !a.Is4() || seen[a] {
+			return
+		}
+		seen[a] = true
+		out = append(out, a)
+	}
+	if len(p.Addresses) > 0 {
+		for _, s := range p.Addresses {
+			if a, err := netip.ParseAddr(s); err == nil {
+				add(a)
+			}
+		}
+		return out
+	}
+	for _, ep := range p.Endpoints {
+		if ap, err := netip.ParseAddrPort(ep); err == nil {
+			add(ap.Addr())
+		}
+	}
+	return out
 }
 
 type peersFile struct {

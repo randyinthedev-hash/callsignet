@@ -10,20 +10,30 @@ import (
 // Status는 csa status가 보여 주는 값이다. 도는 csa가 JSON으로 내고 csa status가
 // 읽어 표로 찍는다.
 type Status struct {
-	PeerID       string `json:"peer-id"`
-	Iface        string `json:"iface"`
-	TunnelIP     string `json:"tunnel-ip"`
-	Domain       string `json:"domain"`
-	Resolver     string `json:"resolver"`
+	PeerID   string `json:"peer-id"`
+	Iface    string `json:"iface"`
+	TunnelIP string `json:"tunnel-ip"`
+	// RealIP는 터널로 온 연결의 목적지를 바꿀 이 머신의 실제 IP다. 모르면 비어 있다.
+	RealIP       string `json:"real-ip"`
 	Guard        string `json:"guard"`
 	GuardBlocked uint64 `json:"guard-blocked"`
 	// GuardUnchecked는 앞서 남은 직통 경로 규칙이 있는지 보지 못했다는 뜻이다.
-	GuardUnchecked bool         `json:"guard-unchecked"`
-	MTU            int          `json:"mtu"`
-	MaxMSS         uint16       `json:"max-mss"`
-	Clamped        uint64       `json:"mss-clamped"`
-	Since          time.Time    `json:"since"`
-	Peers          []PeerStatus `json:"peers"`
+	GuardUnchecked bool `json:"guard-unchecked"`
+	// NATOutgoing은 앱이 실제 IP로 부른 연결을 터널로 돌리는지다. NATIncoming은
+	// 터널로 온 연결을 앱에 어느 주소로 보이는지다.
+	NATOutgoing string `json:"nat-outgoing"`
+	NATIncoming string `json:"nat-incoming"`
+	// NATSteered는 지금까지 터널로 돌린 연결 수, NATPresented는 앱에 실제 IP로
+	// 보인 연결 수다. 계수기는 연결의 첫 패킷에만 걸리므로 패킷이 아니라 연결이다.
+	NATSteered   uint64 `json:"nat-steered"`
+	NATPresented uint64 `json:"nat-presented"`
+	// NATUnchecked는 앞서 남은 주소 바꾸기 표가 있는지 보지 못했다는 뜻이다.
+	NATUnchecked bool         `json:"nat-unchecked"`
+	MTU          int          `json:"mtu"`
+	MaxMSS       uint16       `json:"max-mss"`
+	Clamped      uint64       `json:"mss-clamped"`
+	Since        time.Time    `json:"since"`
+	Peers        []PeerStatus `json:"peers"`
 }
 
 // PeerStatus는 상대 하나의 상태다. Handshake가 비어 있으면 아직 한 번도 세션을
@@ -46,9 +56,8 @@ func Format(s Status, now time.Time) string {
 	// 변수 뒤에 조사를 붙이지 않는다. peer-id도 이름 해석 갈래도 값에 따라
 	// 조사가 달라지는데 그 값을 미리 알 수 없다.
 	fmt.Fprintf(&b, "csa가 돕니다. 기동한 지 %s 지났습니다.\n", span(now.Sub(s.Since)))
-	fmt.Fprintf(&b, "peer-id %s, 인터페이스 %s, 터널 IP %s, 도메인 %s\n",
-		s.PeerID, s.Iface, s.TunnelIP, s.Domain)
-	fmt.Fprintf(&b, "이름 해석 자리를 차지한 방법: %s\n", s.Resolver)
+	fmt.Fprintf(&b, "peer-id %s, 인터페이스 %s, 터널 IP %s, 실제 IP %s\n",
+		s.PeerID, s.Iface, s.TunnelIP, dash(s.RealIP))
 	fmt.Fprintf(&b, "MTU %d, TCP MSS 한도 %d바이트입니다. 지금까지 깎은 횟수 %d번입니다.\n",
 		s.MTU, s.MaxMSS, s.Clamped)
 	fmt.Fprintf(&b, "직통 경로를 닫는 방법: %s. 지금까지 막은 패킷 %d개입니다.\n",
@@ -56,6 +65,13 @@ func Format(s Status, now time.Time) string {
 	if s.GuardUnchecked {
 		b.WriteString("nft를 찾지 못해 앞서 남은 직통 경로 규칙이 있는지 보지 못했습니다." +
 			" 그 규칙이 남아 있으면 이 머신의 서비스 포트는 아직 닫혀 있습니다.\n")
+	}
+	fmt.Fprintf(&b, "앱이 실제 IP로 부른 연결: %s. 지금까지 터널로 돌린 연결 %d개입니다.\n",
+		s.NATOutgoing, s.NATSteered)
+	fmt.Fprintf(&b, "터널로 온 연결을 앱에 보이는 주소: %s. 지금까지 실제 IP로 보인 연결 %d개입니다.\n",
+		s.NATIncoming, s.NATPresented)
+	if s.NATUnchecked {
+		b.WriteString("nft를 찾지 못해 앞서 남은 주소 바꾸기 표가 있는지 보지 못했습니다.\n")
 	}
 	b.WriteString("\n")
 

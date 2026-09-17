@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdh"
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,10 +34,9 @@ func good(t *testing.T) *Config {
 	}
 	return &Config{
 		Self: Self{
-			PeerID: "srv-a", PrivateKey: key, Domain: "cs.example.internal",
+			PeerID: "srv-a", PrivateKey: key,
 			TunnelCIDR: "10.91.0.0/24", ListenPort: 51820,
 			Tun: Tun{Name: "cs0", MTU: 1420},
-			DNS: DNS{Listen: "127.0.53.1:53", TTL: 300},
 		},
 		Peers: []Peer{
 			{PeerID: "srv-a", PublicKey: pubA, TunnelIP: "10.91.0.1",
@@ -69,6 +69,46 @@ func TestIPv6접속주소는받는다(t *testing.T) {
 	}
 }
 
+// TestTunnelIP모드는실제IP없이도뜬다는 nat.incoming이 tunnel-ip이면 이 머신의
+// 실제 IP를 몰라도 되는지 본다. 바꿀 주소가 필요 없기 때문이다.
+func TestTunnelIP모드는실제IP없이도뜬다(t *testing.T) {
+	c := good(t)
+	c.Peers[0].Endpoints = []string{"[2001:db8::1]:51820"}
+	c.Self.NAT.Incoming = "tunnel-ip"
+	if p := c.Validate(); len(p) != 0 {
+		t.Fatalf("tunnel-ip인데 실제 IP를 요구했다: %v", p)
+	}
+}
+
+// TestRealIPs는 addresses가 없으면 endpoints의 IPv4를 실제 IP로 쓰는지 본다.
+func TestRealIPs(t *testing.T) {
+	p := Peer{Endpoints: []string{"10.0.5.2:51820", "[2001:db8::2]:51820", "10.0.5.2:51821", "10.0.9.2:51820"}}
+	got := fmt.Sprint(p.RealIPs())
+	if got != "[10.0.5.2 10.0.9.2]" {
+		t.Fatalf("endpoints에서 IPv4만 한 번씩 골라야 하는데 %s", got)
+	}
+	p.Addresses = []string{"10.0.7.2", "이건 주소가 아니다"}
+	if got := fmt.Sprint(p.RealIPs()); got != "[10.0.7.2]" {
+		t.Fatalf("addresses가 있으면 그것만 써야 하는데 %s", got)
+	}
+}
+
+// TestDeprecated는 0.1.x의 열쇠가 남아 있어도 기동을 막지 않고 알리기만 하는지 본다.
+func TestDeprecated(t *testing.T) {
+	c := good(t)
+	c.Self.Domain = "cs.example.internal"
+	c.Self.DNS = DNS{Listen: "127.0.53.1:53", TTL: 300}
+	if p := c.Validate(); len(p) != 0 {
+		t.Fatalf("더 쓰지 않는 열쇠를 어긋난 것으로 보았다: %v", p)
+	}
+	if got := c.Self.Deprecated(); len(got) != 2 {
+		t.Fatalf("더 쓰지 않는 열쇠 둘을 알려야 하는데 %v", got)
+	}
+	if got := good(t).Self.Deprecated(); len(got) != 0 {
+		t.Fatalf("없는 열쇠를 알렸다: %v", got)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -84,16 +124,22 @@ func TestValidate(t *testing.T) {
 		{"공개키가 32바이트가 아니다", func(c *Config) { c.Peers[1].PublicKey = "aGVsbG8=" }, "32바이트"},
 		{"터널 IP가 IPv6다", func(c *Config) { c.Peers[1].TunnelIP = "fd00::2" }, "IPv4여야 한다"},
 		{"터널 대역이 IPv6다", func(c *Config) { c.Self.TunnelCIDR = "fd00::/64" }, "IPv4여야 한다"},
-		{"터널 대역이 8비트 단위가 아니다", func(c *Config) { c.Self.TunnelCIDR = "10.91.0.0/25" }, "8비트 단위"},
-		{"dns.listen의 포트가 53이 아니다", func(c *Config) { c.Self.DNS.Listen = "127.0.53.1:5353" }, "포트는 53"},
-		{"dns.listen이 루프백이 아니다", func(c *Config) { c.Self.DNS.Listen = "10.0.0.5:53" }, "루프백"},
-		{"listen-port가 53이다", func(c *Config) { c.Self.ListenPort = 53 }, "53으로 둘 수 없다"},
-		{"서비스 포트가 53이다", func(c *Config) { c.Peers[0].Services[0].Port = 53 }, "53으로 둘 수 없다"},
+		{"addresses를 읽을 수 없다", func(c *Config) { c.Peers[1].Addresses = []string{"바보"} }, "addresses를 읽을 수 없다"},
+		{"addresses가 IPv6다", func(c *Config) { c.Peers[1].Addresses = []string{"2001:db8::2"} }, "addresses는 IPv4"},
+		{"addresses가 터널 대역 안이다", func(c *Config) { c.Peers[1].Addresses = []string{"10.91.0.9"} }, "tunnel-cidr 안"},
+		{"실제 IP가 두 peer에 나타난다", func(c *Config) { c.Peers[1].Addresses = []string{"10.0.5.1"} }, "실제 IP가 두 peer"},
+		{"endpoints의 IP가 다른 peer의 addresses와 같다", func(c *Config) {
+			c.Peers[0].Addresses = []string{"10.0.5.2"}
+		}, "실제 IP가 두 peer"},
+		{"nat.outgoing이 모르는 값이다", func(c *Config) { c.Self.NAT.Outgoing = "돌려" }, "nat.outgoing은"},
+		{"nat.incoming이 모르는 값이다", func(c *Config) { c.Self.NAT.Incoming = "보여" }, "nat.incoming은"},
+		{"real-ip인데 이 머신의 실제 IP를 모른다", func(c *Config) {
+			c.Peers[0].Endpoints = []string{"[2001:db8::1]:51820"}
+		}, "실제 IP를 모른다"},
 		{"peer-id에 대문자가 있다", func(c *Config) { c.Peers[1].PeerID = "Srv-B" }, "소문자와 숫자와 붙임표"},
 		{"peer-id에 경로 글자가 있다", func(c *Config) { c.Peers[1].PeerID = "../etc/x" }, "소문자와 숫자와 붙임표"},
 		{"peer-id에 점이 있다", func(c *Config) { c.Peers[1].PeerID = "srv.b" }, "소문자와 숫자와 붙임표"},
 		{"app에 점이 있다", func(c *Config) { c.Peers[0].Services[0].App = "bill.ing" }, "소문자와 숫자와 붙임표"},
-		{"도메인의 조각이 잘못됐다", func(c *Config) { c.Self.Domain = "cs..example" }, "domain의 조각"},
 		{"tun.name이 너무 길다", func(c *Config) { c.Self.Tun.Name = "cs0123456789abcdef" }, "15글자를 넘는다"},
 		{"tun.name에 슬래시가 있다", func(c *Config) { c.Self.Tun.Name = "cs/0" }, "쓸 수 없는 글자"},
 		{"endpoint의 포트가 0이다", func(c *Config) { c.Peers[1].Endpoints = []string{"10.0.5.2:0"} }, "포트가 0"},
@@ -127,8 +173,6 @@ func TestValidate(t *testing.T) {
 		}, "만료됐다"},
 		{"포트가 범위를 벗어났다", func(c *Config) { c.Peers[0].Services[0].Port = 70000 }, "port가 범위"},
 		{"MTU가 범위를 벗어났다", func(c *Config) { c.Self.Tun.MTU = 9000 }, "mtu가 범위"},
-		{"dns.listen이 없다", func(c *Config) { c.Self.DNS.Listen = "" }, "dns.listen이 없다"},
-		{"dns.listen을 읽을 수 없다", func(c *Config) { c.Self.DNS.Listen = "포트없음" }, "dns.listen을 읽을 수 없다"},
 		{"guard.mode가 모르는 값이다", func(c *Config) { c.Self.Guard.Mode = "닫아" }, "guard.mode는"},
 		{"guard의 열어 둘 포트가 범위를 벗어났다", func(c *Config) {
 			c.Self.Guard.Mode = "all"
@@ -206,7 +250,6 @@ func TestLoad(t *testing.T) {
 	write("csa.toml", `
 peer-id     = "srv-a"
 private-key = "/etc/callsignet/private.key"
-domain      = "cs.example.internal"
 tunnel-cidr = "10.91.0.0/24"
 listen-port = 51820
 
@@ -214,9 +257,9 @@ listen-port = 51820
 name = "cs0"
 mtu  = 1420
 
-[dns]
-listen = "127.0.53.1:53"
-ttl    = 300
+[nat]
+outgoing = "services"
+incoming = "tunnel-ip"
 `)
 	write("peers.toml", `
 [[peer]]
@@ -224,6 +267,7 @@ peer-id    = "srv-a"
 public-key = "AAAA"
 tunnel-ip  = "10.91.0.1"
 endpoints  = ["10.0.5.1:51820"]
+addresses  = ["10.0.5.1", "10.0.9.1"]
 services   = [{ app = "billing", port = 8080 }]
 `)
 	write("policy.toml", `
@@ -237,10 +281,10 @@ allow = ["srv-a"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Self.PeerID != "srv-a" || c.Self.Tun.MTU != 1420 || c.Self.DNS.Listen != "127.0.53.1:53" || c.Self.DNS.TTL != 300 {
+	if c.Self.PeerID != "srv-a" || c.Self.Tun.MTU != 1420 || c.Self.NAT.Outgoing != "services" || c.Self.NAT.Incoming != "tunnel-ip" {
 		t.Fatalf("csa.toml을 잘못 읽었다: %+v", c.Self)
 	}
-	if len(c.Peers) != 1 || c.Peers[0].Services[0].Port != 8080 {
+	if len(c.Peers) != 1 || c.Peers[0].Services[0].Port != 8080 || len(c.Peers[0].Addresses) != 2 {
 		t.Fatalf("peers.toml을 잘못 읽었다: %+v", c.Peers)
 	}
 	if len(c.Policy.Outbound) != 1 || c.Policy.Inbound[0].App != "billing" {

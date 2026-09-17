@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# csa 둘이 터널을 세우고 터널 IP로 통신하는지 확인한다.
+# csa 둘이 터널을 세우고, 앱이 상대의 실제 IP로 불러도 터널로 나르는지 확인한다.
 #
 # 네임스페이스 둘을 만들어 브리지로 잇고, 각 네임스페이스에서 csa를 띄운 뒤
-# 한쪽 터널 IP에서 다른 쪽 터널 IP로 ping을 보낸다.
+# 한쪽 터널 IP에서 다른 쪽 터널 IP로 ping을 보낸다. 그다음 앱이 상대의 실제 IP와
+# 포트로 붙는다. srv-b는 앱에 실제 IP를 보이는 머신이고 srv-a는 터널 IP를 그대로
+# 보이는 머신이다. 두 모드가 한 자리에서 함께 확인된다.
 set -euo pipefail
 
 NS_A=cs-a
@@ -70,9 +72,9 @@ attach "$NS_A" "$IP_A"
 attach "$NS_B" "$IP_B"
 attach "$NS_C" "$IP_C"
 
-# 상위 리졸버만 적어 둔다. csa가 이 파일을 가져가 자기를 첫 줄에 넣어야 한다.
-# ip netns exec는 /etc/netns/<이름>/resolv.conf가 있으면 그것을 /etc/resolv.conf
-# 자리에 붙여 준다. 심볼릭 링크가 아니므로 csa는 파일 갈래로 판별한다.
+# 회사 리졸버만 적어 둔다. csa는 이 파일을 건드리지 않아야 한다. 0.1.x는 여기에
+# 자기를 첫 줄에 넣었다. ip netns exec는 /etc/netns/<이름>/resolv.conf가 있으면
+# 그것을 /etc/resolv.conf 자리에 붙여 준다.
 UPSTREAM=10.90.0.253
 for ns in "$NS_A" "$NS_B"; do
   mkdir -p "/etc/netns/$ns"
@@ -105,15 +107,16 @@ cp "$WORK/a/psk/srv-b.key" "$WORK/b/psk/srv-a.key"
 "$CSA" genpsk -o "$WORK/a/psk/srv-c.key" >/dev/null
 "$CSA" genpsk -o "$WORK/b/psk/srv-c.key" >/dev/null
 
-# 두 머신에 서로 다른 앱을 둔다. 이름 해석이 앱마다 다른 답을 내는지 보려는 것이다.
+# 두 머신에 서로 다른 앱을 둔다.
 APP_A=billing
 APP_B=report
 # srv-b에만 있는 앱이다. srv-a는 나가도 되지만 srv-b는 들이지 않는다. 받는 쪽이
 # 최종 판단 주체임을 확인하려고 정책을 일부러 어긋나게 둔다.
 APP_SECRET=secret
 PORT_SECRET=7070
-# 설정에는 있으나 정책에 없는 상대다. 이름은 풀리지만 통신은 막혀야 한다.
+# 설정에는 있으나 정책에 없는 상대다. 실제 IP로 부르면 보내는 쪽 csa가 막아야 한다.
 WG_C=10.91.0.3
+IP_C_REAL=10.90.0.99
 
 peers_toml() {
   cat <<TOML
@@ -135,16 +138,15 @@ services   = [{ app = "$APP_B", port = 8080 }, { app = "$APP_SECRET", port = $PO
 peer-id    = "srv-c"
 public-key = "$PUB_C"
 tunnel-ip  = "$WG_C"
-endpoints  = ["10.90.0.99:$PORT"]
+endpoints  = ["$IP_C_REAL:$PORT"]
 services   = [{ app = "idle", port = 8080 }]
 TOML
 }
-side() { # dir peer-id 상대 내앱 상대앱
+side() { # dir peer-id 상대 내앱 상대앱 outbound줄 받는쪽모드
   peers_toml > "$WORK/$1/peers.toml"
   cat > "$WORK/$1/csa.toml" <<TOML
 peer-id     = "$2"
 private-key = "$WORK/$1/private.key"
-domain      = "cs.test.internal"
 tunnel-cidr = "$CIDR"
 listen-port = $PORT
 
@@ -152,8 +154,8 @@ listen-port = $PORT
 name = "cs0"
 mtu  = 1420
 
-[dns]
-listen = "127.0.53.1:53"
+[nat]
+incoming = "$7"
 
 [psk]
 dir  = "$WORK/$1/psk"
@@ -168,8 +170,9 @@ allow = ["$3"]
 TOML
 }
 # srv-a는 srv-b의 report와 secret에 나가도 된다. 그런데 srv-b는 report만 들인다.
-side a srv-a srv-b "$APP_A" "$APP_B" "outbound = [\"srv-b/$APP_B\", \"srv-b/$APP_SECRET\"]"
-side b srv-b srv-a "$APP_B" "$APP_A" "outbound = [\"srv-a/$APP_A\"]"
+# srv-a는 앱에 터널 IP를 그대로 보이고, srv-b는 실제 IP로 보인다.
+side a srv-a srv-b "$APP_A" "$APP_B" "outbound = [\"srv-b/$APP_B\", \"srv-b/$APP_SECRET\"]" tunnel-ip
+side b srv-b srv-a "$APP_B" "$APP_A" "outbound = [\"srv-a/$APP_A\"]" real-ip
 
 echo "== 설정 검사"
 "$CSA" check -c "$WORK/a"
@@ -203,96 +206,131 @@ for i in $(seq 45); do
 done
 if [ "$OK" = 1 ] && ip netns exec "$NS_A" ping -c 3 -W 2 -I "$WG_A" "$WG_B"; then
   echo
-  echo "== 리졸버 자리 차지하기"
-  TAKE_OK=1
-  if grep -q "^nameserver 127.0.53.1" "/etc/netns/$NS_A/resolv.conf"; then
-    printf '  ok    %s\n' "csa가 자기를 첫 줄에 넣었다"
+  echo "== 주소 바꾸기 표"
+  NT_OK=1
+  RULES_A=$(ip netns exec "$NS_A" nft list table ip callsignet-nat 2>/dev/null || true)
+  RULES_B=$(ip netns exec "$NS_B" nft list table ip callsignet-nat 2>/dev/null || true)
+  if [ -n "$RULES_A" ] && [ -n "$RULES_B" ]; then
+    printf '  ok    %s\n' "csa가 주소 바꾸기 표를 만들었다"
   else
-    printf '  틀림  %s\n' "csa가 자기를 첫 줄에 넣지 않았다"; TAKE_OK=0
+    printf '  틀림  %s\n' "주소 바꾸기 표가 없다"; NT_OK=0
   fi
-  if grep -q "^nameserver $UPSTREAM" "/etc/netns/$NS_A/resolv.conf"; then
-    printf '  ok    %s\n' "원래 리졸버를 남겼다"
+  if printf '%s' "$RULES_A" | grep -q "chain output" && ! printf '%s' "$RULES_A" | grep -q "chain prerouting"; then
+    printf '  ok    %s\n' "터널 IP를 그대로 보이는 머신은 보내는 쪽 체인만 만든다"
   else
-    printf '  틀림  %s\n' "원래 리졸버를 잃었다"; TAKE_OK=0
+    printf '  틀림  %s\n' "srv-a의 표가 다르다"; NT_OK=0
   fi
-  if grep -q "이름 해석을 확인했습니다" "$WORK/a/csa.log"; then
-    printf '  ok    %s\n' "csa가 이름 해석이 되는지 스스로 확인했다"
+  if printf '%s' "$RULES_B" | grep -q "ip daddr $WG_B .*dnat to $IP_B" &&
+     printf '%s' "$RULES_B" | grep -q "ip daddr $IP_A tcp dport 8080 .*dnat to $WG_A"; then
+    printf '  ok    %s\n' "실제 IP로 보이는 머신은 두 방향 체인을 모두 만든다"
   else
-    printf '  틀림  %s\n' "csa가 이름 해석이 되는지 확인하지 못했다"; TAKE_OK=0
+    printf '  틀림  %s\n' "srv-b의 표가 다르다"; NT_OK=0
   fi
-  [ "$TAKE_OK" = 1 ] || { grep -i "이름 해석" "$WORK/a/csa.log" || true; exit 1; }
+  if [ "$(cat "/etc/netns/$NS_A/resolv.conf")" = "nameserver $UPSTREAM" ]; then
+    printf '  ok    %s\n' "csa가 /etc/resolv.conf를 건드리지 않는다"
+  else
+    printf '  틀림  %s\n' "csa가 /etc/resolv.conf를 고쳤다"; cat "/etc/netns/$NS_A/resolv.conf"; NT_OK=0
+  fi
+  [ "$NT_OK" = 1 ] || { echo "--- a의 표 ---"; echo "$RULES_A"; echo "--- b의 표 ---"; echo "$RULES_B"; exit 1; }
 
   echo
-  echo "== 이름 해석"
-  NAME_OK=1
-  check_dig() { # 질의 기대값 설명
-    got=$(ip netns exec "$NS_A" dig @127.0.53.1 +short +time=2 +tries=1 $1 2>/dev/null | head -1)
-    if [ "$got" = "$2" ]; then
-      printf '  ok    %-46s -> %s\n' "$3" "$got"
-    else
-      printf '  틀림  %-46s -> %s (기대 %s)\n' "$3" "${got:-없음}" "$2"; NAME_OK=0
-    fi
-  }
-  check_dig "$APP_B.srv-b.cs.test.internal A" "$WG_B"                    "서비스 이름"
-  check_dig "srv-b.cs.test.internal A"        "$WG_B"                    "머신 이름"
-  check_dig "-x $WG_B"                        "srv-b.cs.test.internal."  "역방향"
-
-  check_dig "$APP_A.srv-a.cs.test.internal A" "$WG_A"                    "자기 서비스 이름"
-
-  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 "$APP_A.srv-b.cs.test.internal" A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
-  if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "다른 머신의 앱 이름"
-  else printf '  틀림  %-46s -> %s\n' "다른 머신의 앱 이름" "${rc:-없음}"; NAME_OK=0; fi
-
-  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 srv-z.cs.test.internal A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
-  if [ "$rc" = NXDOMAIN ]; then printf '  ok    %-46s -> NXDOMAIN\n' "설정에 없는 이름"
-  else printf '  틀림  %-46s -> %s\n' "설정에 없는 이름" "${rc:-없음}"; NAME_OK=0; fi
-
-  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 www.example.com AAAA 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
-  if [ "$rc" = REFUSED ]; then printf '  ok    %-46s -> REFUSED\n' "우리 도메인이 아닌 이름의 AAAA"
-  else printf '  틀림  %-46s -> %s\n' "우리 도메인이 아닌 이름의 AAAA" "${rc:-없음}"; NAME_OK=0; fi
-
-  rc=$(ip netns exec "$NS_A" dig @127.0.53.1 +time=2 +tries=1 www.example.com A 2>/dev/null | sed -n 's/.*status: \([A-Z]*\).*/\1/p')
-  if [ "$rc" = REFUSED ]; then printf '  ok    %-46s -> REFUSED\n' "우리 도메인이 아닌 이름"
-  else printf '  틀림  %-46s -> %s\n' "우리 도메인이 아닌 이름" "${rc:-없음}"; NAME_OK=0; fi
-
-  echo
-  echo "== 이름으로 ping"
-  if ip netns exec "$NS_A" ping -c 2 -W 2 "$APP_B.srv-b.cs.test.internal"; then
-    echo
-    echo "확인했습니다. 앱이 이름으로 부르고 csa 둘이 터널로 나릅니다."
-
-    echo
-    echo "== TCP 연결"
-    # ping은 ICMP라서 peer 단위로만 판단한다. TCP는 다르다. 서버가 돌려주는
-    # 패킷의 목적지는 부른 쪽 앱의 임시 포트인데, 그 포트는 어느 정책에도 적혀
-    # 있지 않다. csa가 들인 연결을 기억하지 않으면 손잡기부터 서지 않는다.
-    TCP_OK=1
-    ip netns exec "$NS_B" python3 -c "
+  echo "== 실제 IP로 부른 연결"
+  # 앱은 상대를 지금 쓰는 실제 IP로 부른다. 보내는 쪽 csa의 표가 그 연결을 터널로
+  # 돌린다. 받는 쪽 서버는 실제 IP 하나에만 듣는다. 레거시 서버가 그렇다. 받는 쪽
+  # csa의 표가 목적지를 실제 IP로 바꾸지 않으면 이 서버는 받지 못한다.
+  TCP_OK=1
+  serve_tcp() { # ns bind 출력파일
+    ip netns exec "$1" python3 -c "
 import socket
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('$WG_B', 8080))
+s.bind(('$2', 8080))
 s.listen(1)
-c, _ = s.accept()
+c, peer = s.accept()
 c.sendall(b'pong:' + c.recv(64))
+print(peer[0], flush=True)
 c.close()
-" & LISTEN_PID=$!
+" > "$3" 2>&1 &
     sleep 1
-    got=$(ip netns exec "$NS_A" timeout 5 bash -c \
-      "exec 3<>/dev/tcp/$APP_B.srv-b.cs.test.internal/8080; printf 'ping\n' >&3; head -1 <&3" 2>/dev/null || true)
-    kill "$LISTEN_PID" 2>/dev/null || true
-    if [ "$got" = "pong:ping" ]; then
-      printf '  ok    %s\n' "이름으로 TCP를 맺고 양쪽으로 자료가 오간다"
-    else
-      printf '  틀림  %s\n' "TCP가 서지 않는다. 받은 것: ${got:-없음}"; TCP_OK=0
-    fi
-    if grep -q "나가는 연결을 막았습니다" "$WORK/b/csa.log"; then
-      printf '  틀림  %s\n' "받는 쪽이 자기 답을 막았다"
-      grep "나가는 연결을 막았습니다" "$WORK/b/csa.log" | tail -3 | sed 's/^/        /'; TCP_OK=0
-    else
-      printf '  ok    %s\n' "받는 쪽이 자기 답을 막지 않는다"
-    fi
-    [ "$TCP_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
+  }
+  dial_tcp() { # ns 주소
+    ip netns exec "$1" timeout 5 bash -c \
+      "exec 3<>/dev/tcp/$2/8080; printf 'ping\n' >&3; head -1 <&3" 2>/dev/null || true
+  }
+  serve_tcp "$NS_B" "$IP_B" "$WORK/b/serve.out"; LISTEN_PID=$!
+  got=$(dial_tcp "$NS_A" "$IP_B")
+  sleep 0.3
+  kill "$LISTEN_PID" 2>/dev/null || true
+  if [ "$got" = "pong:ping" ]; then
+    printf '  ok    %s\n' "앱이 상대의 실제 IP와 포트로 TCP를 맺고 양쪽으로 자료가 오간다"
+  else
+    printf '  틀림  %s\n' "실제 IP로 TCP가 서지 않는다. 받은 것: ${got:-없음}"; TCP_OK=0
+  fi
+  if grep -q "들어온 연결을 받았습니다.*상대 srv-a.*:8080" "$WORK/b/csa.log"; then
+    printf '  ok    %s\n' "받는 쪽 csa의 기록에 peer-id가 남는다. 터널로 왔다"
+  else
+    printf '  틀림  %s\n' "받는 쪽 csa의 기록에 그 연결이 없다"; TCP_OK=0
+  fi
+  peer=$(head -1 "$WORK/b/serve.out" 2>/dev/null || true)
+  if [ "$peer" = "$IP_A" ]; then
+    printf '  ok    %s\n' "실제 IP 하나에만 바인딩한 서버가 받고 상대를 보낸 쪽의 실제 IP로 본다 ($peer)"
+  else
+    printf '  틀림  %s\n' "서버가 보는 상대 주소가 다르다: ${peer:-없음} (기대 $IP_A)"; TCP_OK=0
+  fi
+  # ping은 ICMP라서 peer 단위로만 판단한다. TCP는 다르다. 서버가 돌려주는 패킷의
+  # 목적지는 부른 쪽 앱의 임시 포트인데, 그 포트는 어느 정책에도 적혀 있지 않다.
+  # csa가 들인 연결을 기억하지 않으면 손잡기부터 서지 않는다.
+  if grep -q "나가는 연결을 막았습니다" "$WORK/b/csa.log"; then
+    printf '  틀림  %s\n' "받는 쪽이 자기 답을 막았다"
+    grep "나가는 연결을 막았습니다" "$WORK/b/csa.log" | tail -3 | sed 's/^/        /'; TCP_OK=0
+  else
+    printf '  ok    %s\n' "받는 쪽이 자기 답을 막지 않는다"
+  fi
+
+  # UDP도 같은 길이다. 서버는 실제 IP에 듣고 답의 출발지도 실제 IP여야 한다.
+  ip netns exec "$NS_B" python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.bind(('$IP_B', 8080))
+data, peer = s.recvfrom(64)
+s.sendto(b'pong:' + data, peer)
+" > /dev/null 2>&1 & UDP_PID=$!
+  sleep 1
+  got=$(ip netns exec "$NS_A" python3 -c "
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.settimeout(3)
+try:
+    s.sendto(b'ping', ('$IP_B', 8080))
+    data, peer = s.recvfrom(64)
+    print(data.decode(), peer[0])
+except OSError as e:
+    print('실패', type(e).__name__)
+" 2>/dev/null || true)
+  kill "$UDP_PID" 2>/dev/null || true
+  if [ "$got" = "pong:ping $IP_B" ]; then
+    printf '  ok    %s\n' "UDP도 실제 IP로 오가고 답의 출발지가 상대의 실제 IP다"
+  else
+    printf '  틀림  %s\n' "UDP가 오가지 않는다: ${got:-없음}"; TCP_OK=0
+  fi
+
+  # 반대 방향. srv-a는 터널 IP를 그대로 보이는 머신이다. 서버는 0.0.0.0에 듣고
+  # 상대를 보낸 쪽의 터널 IP로 본다. 두 모드가 한 자리에서 서로 통한다.
+  serve_tcp "$NS_A" 0.0.0.0 "$WORK/a/serve.out"; LISTEN_PID=$!
+  got=$(dial_tcp "$NS_B" "$IP_A")
+  sleep 0.3
+  kill "$LISTEN_PID" 2>/dev/null || true
+  peer=$(head -1 "$WORK/a/serve.out" 2>/dev/null || true)
+  if [ "$got" = "pong:ping" ] && [ "$peer" = "$WG_B" ]; then
+    printf '  ok    %s\n' "터널 IP를 그대로 보이는 머신의 앱은 상대를 터널 IP로 본다 ($peer)"
+  else
+    printf '  틀림  %s\n' "반대 방향이 다르다. 받은 것 ${got:-없음}, 상대 주소 ${peer:-없음} (기대 $WG_B)"; TCP_OK=0
+  fi
+  [ "$TCP_OK" = 1 ] || { echo "--- a의 로그 ---"; tail -20 "$WORK/a/csa.log"; echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
+
+  if [ "$TCP_OK" = 1 ]; then
+    echo
+    echo "확인했습니다. 앱이 실제 IP로 부르고 csa 둘이 터널로 나릅니다."
 
     echo
     echo "== 직통 경로"
@@ -332,8 +370,8 @@ serve(9999)
       printf '  틀림  %s\n' "적지 않은 포트까지 막았다"; DP_OK=0
     fi
     if [ "$(ip netns exec "$NS_A" timeout 3 bash -c \
-        "exec 3<>/dev/tcp/$APP_B.srv-b.cs.test.internal/8080; head -1 <&3" 2>/dev/null || true)" = "here" ]; then
-      printf '  ok    %s\n' "터널로 오는 연결은 그대로 지난다"
+        "exec 3<>/dev/tcp/$IP_B/8080; head -1 <&3" 2>/dev/null || true)" = "here" ]; then
+      printf '  ok    %s\n' "csa 있는 머신이 실제 IP로 부른 연결은 터널로 돌아 지난다"
     else
       printf '  틀림  %s\n' "터널로 오는 연결까지 막았다"; DP_OK=0
     fi
@@ -353,20 +391,19 @@ serve(9999)
     [ "$DP_OK" = 1 ] || {
       echo "--- b의 규칙 ---"; ip netns exec "$NS_B" nft list ruleset 2>&1 | sed 's/^/        /'
       echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
-    [ "$NAME_OK" = 1 ] || { echo "다만 이름 해석에 틀린 것이 있습니다."; exit 1; }
 
 
     echo
     echo "== 거절 응답"
     # csa가 나가는 연결을 막을 때 앱에 ICMP로 알린다. 앱이 연결 시간을 다
     # 기다리지 않고 곧바로 실패를 보아야 한다. 조용히 버리면 그것을 확인할 수 없다.
-    if ! ip netns exec "$NS_A" python3 - "$WG_B" "$WG_C" <<'PYREJECT'
+    if ! ip netns exec "$NS_A" python3 - "$WG_B" "$WG_C" "$IP_B" "$IP_C_REAL" <<'PYREJECT'
 import errno
 import socket
 import sys
 import time
 
-wg_b, wg_c = sys.argv[1], sys.argv[2]
+wg_b, wg_c, ip_b, ip_c = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 ok = True
 
 
@@ -415,6 +452,17 @@ why, took = dial(wg_b, 8080)
 check(why in ("ECONNREFUSED", "연결됨"),
       "허가된 곳은 상대가 답한다 (%s)" % why,
       "허가된 곳인데 csa가 막았다: %s" % why)
+
+# 실제 IP로 불러도 같다. 보내는 쪽 표가 터널로 돌린 뒤 csa가 거절하면, 연결
+# 추적이 그 거절의 주소를 원래대로 되돌려 앱의 소켓에 닿아야 한다.
+why, took = dial(ip_c, 8080)
+check(why == "EHOSTUNREACH" and took < 1.0,
+      "정책에 없는 상대의 실제 IP로 붙으면 곧바로 EHOSTUNREACH를 받는다 (%.2f초)" % took,
+      "실제 IP로 붙었을 때 받은 것이 다르다: %s (%.2f초)" % (why, took))
+why, took = dial(ip_b, 8080)
+check(why == "ECONNREFUSED",
+      "듣는 앱이 없는 실제 IP의 포트로 붙으면 ECONNREFUSED를 받는다",
+      "실제 IP의 빈 포트에 붙었을 때 받은 것이 다르다: %s" % why)
 
 sys.exit(0 if ok else 1)
 PYREJECT
@@ -506,6 +554,13 @@ check(not c.get("endpoint"),
       "세션을 맺지 않은 상대는 출발지가 비어 있다",
       "관측하지 않은 주소를 보여 준다: %s" % c.get("endpoint"))
 
+check(st.get("nat-steered", 0) > 0,
+      "터널로 돌린 연결을 센다 (%d개)" % st.get("nat-steered", 0),
+      "실제 IP로 부른 연결을 돌렸는데 세지 않는다: %s" % st.get("nat-steered"))
+check(st.get("nat-incoming") == "터널 IP",
+      "앱에 보이는 주소의 모드를 보여 준다 (%s)" % st.get("nat-incoming"),
+      "모드가 다르다: %s" % st.get("nat-incoming"))
+
 sys.exit(0 if ok else 1)
 PYCHECK
     then ST_OK=0; fi
@@ -548,7 +603,7 @@ PYCHECK
       printf '  틀림  %s\n' "정책을 바꿨는데 받는 쪽이 여전히 막는다"; RL_OK=0
     fi
 
-    # 상대를 더하면 이름 표도 함께 바뀐다.
+    # 상대를 더하면 주소 바꾸기 표도 함께 바뀐다.
     PUB_D=$("$CSA" genkey -o "$WORK/d-unused.key" | sed -n 's/^공개키: //p')
     "$CSA" genpsk -o "$WORK/a/psk/srv-d.key" >/dev/null
     printf '\n[[peer]]\npeer-id    = "srv-d"\npublic-key = "%s"\ntunnel-ip  = "10.91.0.4"\nendpoints  = ["10.90.0.98:%s"]\nservices   = [{ app = "ledger", port = 8080 }]\n' \
@@ -559,11 +614,11 @@ PYCHECK
     else
       printf '  틀림  %s\n' "더한 상대를 알리지 않는다"; printf '%s\n' "$out" | sed 's/^/        /'; RL_OK=0
     fi
-    got=$(ip netns exec "$NS_A" dig @127.0.53.1 +short +time=2 +tries=1 ledger.srv-d.cs.test.internal A 2>/dev/null | head -1)
-    if [ "$got" = "10.91.0.4" ]; then
-      printf '  ok    %s\n' "더한 상대의 이름이 바로 풀린다"
+    if ip netns exec "$NS_A" nft list table ip callsignet-nat 2>/dev/null | grep -q "ip daddr 10.90.0.98 tcp dport 8080 .*dnat to 10.91.0.4"; then
+      printf '  ok    %s\n' "더한 상대의 실제 IP가 바로 표에 실린다"
     else
-      printf '  틀림  %s\n' "이름이 풀리지 않는다: ${got:-없음}"; RL_OK=0
+      printf '  틀림  %s\n' "더한 상대가 표에 없다"
+      ip netns exec "$NS_A" nft list table ip callsignet-nat 2>&1 | sed 's/^/        /'; RL_OK=0
     fi
 
     [ "$RL_OK" = 1 ] || exit 1
@@ -580,7 +635,7 @@ PYCHECK
 import socket, time
 s = socket.socket()
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(('$WG_B', 8080))
+s.bind(('$IP_B', 8080))
 s.listen(1)
 c, _ = s.accept()
 c.sendall(b'echo:' + c.recv(64))
@@ -592,7 +647,7 @@ time.sleep(5)
     ip netns exec "$NS_A" python3 -c "
 import socket
 s = socket.socket(); s.settimeout(5)
-s.connect(('$WG_B', 8080))
+s.connect(('$IP_B', 8080))
 s.sendall(b'first\n')
 print('첫째', s.recv(64).decode().strip(), flush=True)
 s.settimeout(10)
@@ -803,17 +858,65 @@ for p in st['peers']:
     [ "$LG_OK" = 1 ] || { echo "--- b의 로그 ---"; tail -20 "$WORK/b/csa.log"; exit 1; }
 
     echo
+    echo "== 상대 csa가 죽었을 때"
+    # srv-b의 csa를 멈추면 그쪽 직통 경로 표가 사라져 서비스 포트가 밖으로 열린다.
+    # 그래도 srv-a의 앱이 실제 IP로 부른 연결은 srv-a의 표가 터널로 돌리므로 그
+    # 열린 포트에 닿지 않는다. 인증 없이 통하는 대신 닫힌 채 실패한다.
+    DD_OK=1
+    kill "$PID_B" 2>/dev/null || true
+    for _ in $(seq 25); do
+      ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1 || break
+      sleep 0.2
+    done
+    if ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1; then
+      echo "  틀림  csa가 직통 경로 규칙을 남겼다"
+      ip netns exec "$NS_B" nft list ruleset | sed 's/^/        /'; DD_OK=0
+    else
+      echo "  ok    csa가 멈추면서 직통 경로 규칙을 지웠다"
+    fi
+    if ip netns exec "$NS_B" nft list table ip callsignet-nat >/dev/null 2>&1; then
+      echo "  틀림  csa가 주소 바꾸기 표를 남겼다"; DD_OK=0
+    else
+      echo "  ok    csa가 멈추면서 주소 바꾸기 표를 지웠다"
+    fi
+    ip netns exec "$NS_B" python3 -c "
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', 8080))
+s.listen(4)
+while True:
+    c, _ = s.accept()
+    c.sendall(b'here\n')
+    c.close()
+" & DEAD_PID=$!
+    sleep 1
+    got=$(ip netns exec "$NS_A" timeout 3 bash -c "exec 3<>/dev/tcp/$IP_B/8080; head -1 <&3" 2>/dev/null || true)
+    if [ -z "$got" ]; then
+      echo "  ok    상대 csa가 죽어 있으면 실제 IP로 불러도 서지 않는다"
+    else
+      echo "  틀림  상대 csa가 죽어 있는데 실제 IP로 붙었다. 인증 없이 통했다"; DD_OK=0
+    fi
+    # csa 없는 머신은 그 열린 포트에 그대로 붙는다. 표가 그 길을 막고 있었다.
+    if [ "$(knock_c "$IP_B" 8080)" = "here" ]; then
+      echo "  ok    csa 없는 머신은 그 열린 포트에 직통으로 붙는다. 지키지 않는 동안에는 지켜지지 않는다"
+    else
+      echo "  틀림  상대 csa가 죽었는데 csa 없는 머신도 붙지 못한다"; DD_OK=0
+    fi
+    kill "$DEAD_PID" 2>/dev/null || true
+    [ "$DD_OK" = 1 ] || { echo "--- a의 로그 ---"; tail -20 "$WORK/a/csa.log"; exit 1; }
+
+    echo
     echo "== 되돌리기"
     kill "$PID_A" 2>/dev/null || true
     for _ in $(seq 20); do
-      grep -q "되돌렸습니다" "$WORK/a/csa.log" && break
+      grep -q "주소 바꾸기 표를 지웠습니다" "$WORK/a/csa.log" && break
       sleep 0.2
     done
-    if grep -q "^nameserver $UPSTREAM" "/etc/netns/$NS_A/resolv.conf" &&
-       ! grep -q "^nameserver 127.0.53.1" "/etc/netns/$NS_A/resolv.conf"; then
-      echo "  ok    csa가 멈추면서 원래 파일로 되돌렸다"
+    if [ "$(cat "/etc/netns/$NS_A/resolv.conf")" = "nameserver $UPSTREAM" ]; then
+      echo "  ok    csa가 멈춘 뒤에도 /etc/resolv.conf는 그대로다"
     else
-      echo "  틀림  되돌리지 않았다"
+      echo "  틀림  csa가 /etc/resolv.conf를 고쳤다"
       cat "/etc/netns/$NS_A/resolv.conf"; exit 1
     fi
     if "$CSA" status -c "$WORK/a" >/dev/null 2>&1; then
@@ -821,13 +924,10 @@ for p in st['peers']:
     else
       echo "  ok    멈춘 뒤에는 csa status가 붙지 못한다고 알린다"
     fi
-    kill "$PID_B" 2>/dev/null || true
-    sleep 1
-    if ip netns exec "$NS_B" nft list table inet callsignet >/dev/null 2>&1; then
-      echo "  틀림  csa가 직통 경로 규칙을 남겼다"
-      ip netns exec "$NS_B" nft list ruleset | sed 's/^/        /'; exit 1
+    if ip netns exec "$NS_A" nft list table ip callsignet-nat >/dev/null 2>&1; then
+      echo "  틀림  csa가 주소 바꾸기 표를 남겼다"; exit 1
     else
-      echo "  ok    csa가 멈추면서 직통 경로 규칙을 지웠다"
+      echo "  ok    csa가 멈추면서 주소 바꾸기 표를 지웠다"
     fi
 
     echo
@@ -952,7 +1052,7 @@ serve(9999)
     [ "$PSK_OK" = 1 ] || { echo "--- a의 로그 ---"; tail -15 "$WORK/a/csa3.log"; exit 1; }
 
   else
-    echo "이름으로는 통하지 않습니다."; exit 1
+    echo "실제 IP로는 통하지 않습니다."; exit 1
   fi
 else
   echo

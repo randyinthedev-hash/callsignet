@@ -30,9 +30,6 @@ func (c *Config) checkSelf() []string {
 	} else if msg := checkLabel("peer-id", s.PeerID); msg != "" {
 		p = append(p, msg)
 	}
-	if msg := checkDomain(s.Domain); msg != "" {
-		p = append(p, msg)
-	}
 	// 개인키는 여기서 다시 열지 않는다. Secrets가 한 번 읽어 둔 것을 본다.
 	// 그 바이트를 wgdev도 그대로 쓴다.
 	if err := c.Secrets().PrivateErr; err != nil {
@@ -41,25 +38,6 @@ func (c *Config) checkSelf() []string {
 	if s.ListenPort <= 0 || s.ListenPort > 65535 {
 		p = append(p, fmt.Sprintf("listen-port가 범위를 벗어났다: %d", s.ListenPort))
 	}
-	if s.DNS.Listen == "" {
-		p = append(p, "csa.toml에 dns.listen이 없다")
-	} else if ap, err := netip.ParseAddrPort(s.DNS.Listen); err != nil {
-		p = append(p, fmt.Sprintf("dns.listen을 읽을 수 없다: %s", s.DNS.Listen))
-	} else {
-		// resolv.conf의 nameserver 줄에는 포트를 적을 수 없다. 53이 아니면
-		// 리졸버가 csa에 묻지 못한다.
-		if ap.Port() != 53 {
-			p = append(p, fmt.Sprintf("dns.listen의 포트는 53이어야 한다: %s", s.DNS.Listen))
-		}
-		// 이 이름 해석기는 이 머신 안에서만 쓴다. 밖으로 열면 조직의 내부
-		// 이름을 아무나 물어볼 수 있다.
-		if !ap.Addr().IsLoopback() {
-			p = append(p, fmt.Sprintf("dns.listen은 루프백 주소여야 한다: %s", s.DNS.Listen))
-		}
-	}
-	if s.ListenPort == 53 {
-		p = append(p, "listen-port를 53으로 둘 수 없다. csa가 그 포트에서 이름 해석을 받는다")
-	}
 	if msg := checkIface(s.TunName()); msg != "" {
 		p = append(p, msg)
 	}
@@ -67,6 +45,7 @@ func (c *Config) checkSelf() []string {
 		p = append(p, fmt.Sprintf("tun.mtu가 범위를 벗어났다: %d", s.Tun.MTU))
 	}
 	p = append(p, checkGuard(s.Guard)...)
+	p = append(p, checkNAT(s.NAT)...)
 
 	cidr, err := netip.ParsePrefix(s.TunnelCIDR)
 	if err != nil {
@@ -79,11 +58,6 @@ func (c *Config) checkSelf() []string {
 	if !cidr.Addr().Is4() {
 		p = append(p, fmt.Sprintf("tunnel-cidr는 IPv4여야 한다: %s", s.TunnelCIDR))
 		return p
-	}
-	// csa는 이 대역으로 역방향 구역을 만들어 이름 해석기에 등록한다. 8비트
-	// 단위가 아니면 구역 이름을 만들 수 없어 기동하지 못한다.
-	if b := cidr.Bits(); b == 0 || b%8 != 0 {
-		p = append(p, fmt.Sprintf("tunnel-cidr는 /8, /16, /24처럼 8비트 단위여야 한다: %s", s.TunnelCIDR))
 	}
 	// 이 머신이 이미 쓰는 대역과 겹치면 원래 가던 트래픽이 터널로 들어간다.
 	for _, local := range localPrefixes(s.TunName()) {
@@ -109,6 +83,21 @@ func checkGuard(g Guard) []string {
 	// 적어 두고 안 쓰이면 운영자가 열었다고 잘못 안다.
 	if g.Mode != "all" && (len(g.KeepTCP) > 0 || len(g.KeepUDP) > 0) {
 		p = append(p, "guard.keep-tcp와 guard.keep-udp는 guard.mode가 all일 때만 쓴다")
+	}
+	return p
+}
+
+func checkNAT(n NAT) []string {
+	var p []string
+	switch n.Outgoing {
+	case "", "services", "off":
+	default:
+		p = append(p, fmt.Sprintf("nat.outgoing은 services와 off 가운데 하나여야 한다: %s", n.Outgoing))
+	}
+	switch n.Incoming {
+	case "", "real-ip", "tunnel-ip":
+	default:
+		p = append(p, fmt.Sprintf("nat.incoming은 real-ip와 tunnel-ip 가운데 하나여야 한다: %s", n.Incoming))
 	}
 	return p
 }
@@ -141,10 +130,11 @@ func checkIface(v string) string {
 
 // checkLabel은 DNS 이름의 한 조각으로 쓸 수 있는지 본다.
 //
-// peer-id와 app은 이름 해석기의 표에 들어가고, 표는 이름을 소문자로 바꾼다.
-// 그대로 두면 Srv-A와 srv-a가 설정 검사를 지나 표에서 부딪힌다. peer-id는
-// 제어 소켓의 경로와 사전 공유키 파일의 이름에도 그대로 들어가므로 /와 ..
-// 같은 글자도 막아야 한다. DNS 조각의 규칙이 그 둘을 함께 막는다.
+// csa는 이름을 풀지 않지만 peer-id와 app을 DNS에 내는 도구가 있을 수 있다.
+// 정식 이름 peer-id/app을 DNS로 낼 때는 app.peer-id.내부도메인으로 적는다.
+// DNS는 이름을 소문자로 보므로 Srv-A와 srv-a가 부딪힌다. peer-id는 제어
+// 소켓의 경로와 사전 공유키 파일의 이름에도 그대로 들어가므로 /와 .. 같은
+// 글자도 막아야 한다. DNS 조각의 규칙이 그 둘을 함께 막는다.
 func checkLabel(kind, v string) string {
 	if v == "" {
 		return kind + "가 비어 있다"
@@ -161,22 +151,6 @@ func checkLabel(kind, v string) string {
 	}
 	if v[0] == '-' || v[len(v)-1] == '-' {
 		return fmt.Sprintf("%s는 붙임표로 시작하거나 끝날 수 없다: %s", kind, v)
-	}
-	return ""
-}
-
-// checkDomain은 도메인이 DNS 이름의 모양인지 본다.
-func checkDomain(v string) string {
-	if v == "" {
-		return "csa.toml에 domain이 없다"
-	}
-	if len(v) > 253 {
-		return "domain이 253글자를 넘는다: " + v
-	}
-	for _, label := range strings.Split(v, ".") {
-		if msg := checkLabel("domain의 조각", label); msg != "" {
-			return msg
-		}
 	}
 	return ""
 }
@@ -213,6 +187,7 @@ func (c *Config) checkPeers() []string {
 	seenID := map[string]bool{}
 	seenIP := map[string]string{}
 	seenKey := map[string]string{}
+	seenReal := map[netip.Addr]string{}
 	for _, peer := range c.Peers {
 		if peer.PeerID == "" {
 			p = append(p, "peer-id가 없는 항목이 있다")
@@ -269,6 +244,31 @@ func (c *Config) checkPeers() []string {
 				p = append(p, fmt.Sprintf("endpoint의 포트가 0이다: %s의 %s", peer.PeerID, ep))
 			}
 		}
+		// 실제 IP는 앱이 그 머신을 부를 때 쓰는 주소다. csa가 그 주소로 가는
+		// 연결을 터널로 돌리고, 터널로 온 연결의 출발지를 그 주소로 바꾼다.
+		// 터널 대역 안이면 돌릴 것과 돌린 것이 뒤섞이고, 두 상대가 같은 주소를
+		// 적으면 어느 상대로 돌릴지 정할 수 없다.
+		for _, s := range peer.Addresses {
+			a, err := netip.ParseAddr(s)
+			if err != nil {
+				p = append(p, fmt.Sprintf("addresses를 읽을 수 없다: %s의 %s", peer.PeerID, s))
+				continue
+			}
+			if !a.Unmap().Is4() {
+				p = append(p, fmt.Sprintf("addresses는 IPv4여야 한다: %s의 %s", peer.PeerID, s))
+				continue
+			}
+			if cidrOK == nil && cidr.Contains(a.Unmap()) {
+				p = append(p, fmt.Sprintf("addresses가 tunnel-cidr 안이다. 실제 IP를 적는 자리다: %s의 %s", peer.PeerID, s))
+			}
+		}
+		for _, a := range peer.RealIPs() {
+			if other, dup := seenReal[a]; dup && other != peer.PeerID {
+				p = append(p, fmt.Sprintf("실제 IP가 두 peer에 나타난다: %s (%s, %s)", a, other, peer.PeerID))
+			} else {
+				seenReal[a] = peer.PeerID
+			}
+		}
 		seenApp := map[string]bool{}
 		seenPort := map[int]string{}
 		for _, svc := range peer.Services {
@@ -276,10 +276,6 @@ func (c *Config) checkPeers() []string {
 				p = append(p, fmt.Sprintf("%s에 이름 없는 service가 있다", peer.PeerID))
 			} else if msg := checkLabel("app", svc.App); msg != "" {
 				p = append(p, msg)
-			}
-			// csa는 터널 IP의 53번 포트에서도 이름 해석을 받는다.
-			if svc.Port == 53 {
-				p = append(p, fmt.Sprintf("서비스 포트를 53으로 둘 수 없다: %s의 %s", peer.PeerID, svc.App))
 			}
 			if seenApp[svc.App] {
 				p = append(p, fmt.Sprintf("app이 두 번 나온다: %s의 %s", peer.PeerID, svc.App))
@@ -306,6 +302,12 @@ func (c *Config) checkPeers() []string {
 
 	if c.Self.PeerID != "" && !seenID[c.Self.PeerID] {
 		p = append(p, fmt.Sprintf("csa.toml의 peer-id가 peers.toml에 없다: %s", c.Self.PeerID))
+	}
+	// 터널로 온 연결을 앱에 실제 IP로 보이려면 이 머신의 실제 IP를 알아야 한다.
+	// 자기 항목에 addresses가 없고 endpoints에도 IPv4가 없으면 바꿀 주소가 없다.
+	if self := c.Find(c.Self.PeerID); self != nil && c.Self.NAT.Incoming != "tunnel-ip" && len(self.RealIPs()) == 0 {
+		p = append(p, fmt.Sprintf("nat.incoming이 real-ip인데 이 머신의 실제 IP를 모른다."+
+			" peers.toml의 %s 항목에 addresses를 적거나 nat.incoming을 tunnel-ip로 두라", c.Self.PeerID))
 	}
 	return p
 }

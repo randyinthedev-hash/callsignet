@@ -22,7 +22,7 @@ import (
 	"github.com/randyinthedev-hash/callsignet/internal/config"
 	"github.com/randyinthedev-hash/callsignet/internal/control"
 	"github.com/randyinthedev-hash/callsignet/internal/guard"
-	"github.com/randyinthedev-hash/callsignet/internal/name"
+	"github.com/randyinthedev-hash/callsignet/internal/nat"
 	"github.com/randyinthedev-hash/callsignet/internal/wgdev"
 )
 
@@ -32,7 +32,7 @@ import (
 // 상수가 아니라 변수다. 설치 시험이 같은 코드로 다른 판을 만들어 올리기와
 // 되돌리기를 밟아 보려면 -ldflags "-X main.Version=..."로 값을 바꿀 수 있어야
 // 한다. 발행할 때는 태그 워크플로가 이 값과 태그가 같은지 본다.
-var Version = "0.1.7"
+var Version = "0.2.0"
 
 const usage = `csa — Callsignet agent
 
@@ -136,6 +136,9 @@ func runCheck(args []string) error {
 		return err
 	}
 	problems := cfg.Validate()
+	for _, w := range cfg.Self.Deprecated() {
+		fmt.Fprintln(os.Stderr, "알림: "+w)
+	}
 	if len(problems) == 0 {
 		fmt.Printf("설정을 확인했습니다. 상대 %d개, 서비스 %d개입니다.\n",
 			len(cfg.Peers), countServices(cfg))
@@ -167,45 +170,26 @@ func runRun(args []string) error {
 	}
 
 	logf := func(f string, a ...any) { log.Printf(f, a...) }
+	for _, w := range cfg.Self.Deprecated() {
+		logf("%s.", w)
+	}
 	dev, err := wgdev.Open(cfg, logf)
 	if err != nil {
 		return err
 	}
 	defer dev.Close()
 
-	table, err := name.NewTable(cfg)
-	if err != nil {
-		return err
-	}
-	self := cfg.Find(cfg.Self.PeerID)
-	dnsSrv := name.NewServer(table, cfg.Self.DNS.TTL, logf)
-	if err := dnsSrv.Start(cfg.Self.DNS.Listen, self.TunnelIP+":53"); err != nil {
-		return err
-	}
-	defer dnsSrv.Close()
-
-	revZone, err := name.ReverseZone(netip.MustParsePrefix(cfg.Self.TunnelCIDR))
-	if err != nil {
-		return err
-	}
-	took, err := name.Apply(dev.Name, cfg.Self.DNS.Listen, self.TunnelIP, cfg.Self.Domain, revZone, logf)
-	if err != nil {
-		return err
-	}
-	defer took.Close()
-
-	machine := cfg.Self.PeerID + "." + cfg.Self.Domain
-	if err := name.Verify(machine, netip.MustParseAddr(self.TunnelIP)); err != nil {
-		logf("이름 해석 설정이 먹지 않았습니다: %v", err)
-	} else {
-		logf("이름 해석을 확인했습니다. %s가 %s로 풀립니다.", machine, self.TunnelIP)
-	}
-
 	gd := guard.New(logf)
 	if err := gd.Apply(guardConfig(cfg)); err != nil {
 		return err
 	}
 	defer gd.Close()
+
+	nt := nat.New(logf)
+	if err := nt.Apply(natConfig(cfg)); err != nil {
+		return err
+	}
+	defer nt.Close()
 
 	// live는 csa가 지금 따르고 있는 설정이다. csa reload가 갈아 끼운다.
 	var live atomic.Pointer[config.Config]
@@ -218,9 +202,9 @@ func runRun(args []string) error {
 	ctl, err := control.Listen(cfg.Self.PeerID, func(req string) (string, error) {
 		switch req {
 		case "status":
-			return statusJSON(live.Load(), dev, took, gd, started)
+			return statusJSON(live.Load(), dev, gd, nt, started)
 		case "reload":
-			out, err := reload(*dir, &live, dev, dnsSrv, gd, logf)
+			out, err := reload(*dir, &live, dev, gd, nt, logf)
 			if errors.Is(err, errMixed) {
 				// 부른 쪽이 까닭을 받아 볼 틈을 두고 신호를 보낸다. 먼저
 				// 멈추면 무엇이 잘못됐는지 알리지 못한 채 연결이 끊긴다.
@@ -242,18 +226,18 @@ func runRun(args []string) error {
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	logf("csa가 돕니다. 멈추려면 Ctrl-C를 누르십시오.")
-	return waitStop(stop, mixed, gd, logf)
+	return waitStop(stop, mixed, []keeper{gd, nt}, logf)
 }
 
-// keeper는 멈출 때 직통 경로 규칙을 남길 수 있는 것이다. 시험에서 바꿔 낀다.
+// keeper는 멈출 때 nftables 표를 남길 수 있는 것이다. 시험에서 바꿔 낀다.
 type keeper interface{ Keep() }
 
 // waitStop은 멈출 까닭을 기다린다.
 //
-// 여기서 돌아가면 runRun이 끝나고, 쌓아 둔 defer가 터널과 이름 해석기를 닫는다.
+// 여기서 돌아가면 runRun이 끝나고, 쌓아 둔 defer가 터널을 닫고 표를 지운다.
 // 그것이 이 함수가 하는 일의 절반이다. 나머지 절반은 반쯤 걸린 상태로 멈출 때
-// 직통 경로 규칙을 남기는 것이다.
-func waitStop(stop <-chan os.Signal, mixed <-chan struct{}, gd keeper, logf func(string, ...any)) error {
+// 두 표를 남기는 것이다.
+func waitStop(stop <-chan os.Signal, mixed <-chan struct{}, keep []keeper, logf func(string, ...any)) error {
 	select {
 	case <-stop:
 		logf("멈춥니다.")
@@ -263,10 +247,13 @@ func waitStop(stop <-chan os.Signal, mixed <-chan struct{}, gd keeper, logf func
 		// 권한을 넓히는 것이었다면 그것이 걸린 채로 도는 셈이다. 터널을 닫아
 		// 아무것도 오가지 못하게 한다.
 		//
-		// 직통 경로 규칙은 남긴다. 지우면 이 머신의 서비스 포트가 터널 밖으로
-		// 다시 열린다. 멈추는 까닭이 안전인데 멈추면서 여는 것은 앞뒤가 맞지
-		// 않는다.
-		gd.Keep()
+		// 두 표는 남긴다. 직통 경로 표를 지우면 이 머신의 서비스 포트가 터널
+		// 밖으로 다시 열리고, 주소 바꾸기 표를 지우면 앱이 실제 IP로 부른
+		// 연결이 직통으로 나간다. 멈추는 까닭이 안전인데 멈추면서 여는 것은
+		// 앞뒤가 맞지 않는다.
+		for _, k := range keep {
+			k.Keep()
+		}
 		logf("반쯤 걸린 상태라 멈춥니다. csa를 다시 띄우십시오.")
 		return errMixed
 	}
@@ -294,15 +281,38 @@ func guardConfig(c *config.Config) guard.Config {
 	return g
 }
 
-func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover,
-	gd *guard.Guard, started time.Time) (string, error) {
+// natConfig는 설정에서 주소 바꾸기 표에 필요한 값을 뽑는다. 상대의 실제 IP와
+// 서비스 포트는 peers.toml에서 온다. 이 머신 자신은 상대 목록에 넣지 않는다.
+func natConfig(c *config.Config) nat.Config {
+	out, _ := nat.ParseOutgoing(c.Self.NAT.Outgoing) // 검사에서 이미 걸렀다
+	in, _ := nat.ParseIncoming(c.Self.NAT.Incoming)
+	n := nat.Config{Outgoing: out, Incoming: in, Iface: c.Self.TunName()}
+	n.TunnelCIDR, _ = netip.ParsePrefix(c.Self.TunnelCIDR)
+	for _, p := range c.Peers {
+		if p.PeerID == c.Self.PeerID {
+			n.SelfTunnelIP, _ = netip.ParseAddr(p.TunnelIP)
+			if real := p.RealIPs(); len(real) > 0 {
+				n.SelfRealIP = real[0]
+			}
+			continue
+		}
+		peer := nat.Peer{RealIPs: p.RealIPs()}
+		peer.TunnelIP, _ = netip.ParseAddr(p.TunnelIP)
+		for _, svc := range p.Services {
+			peer.Ports = append(peer.Ports, svc.Port)
+		}
+		n.Peers = append(n.Peers, peer)
+	}
+	return n
+}
+
+func statusJSON(cfg *config.Config, dev *wgdev.Device, gd *guard.Guard, nt *nat.NAT,
+	started time.Time) (string, error) {
 	self := cfg.Find(cfg.Self.PeerID)
 	st := control.Status{
 		PeerID:   cfg.Self.PeerID,
 		Iface:    dev.Name,
 		TunnelIP: self.TunnelIP,
-		Domain:   cfg.Self.Domain,
-		Resolver: took.Manager.String(),
 		MTU:      cfg.Self.TunMTU(),
 		MaxMSS:   dev.MaxMSS(),
 		Clamped:  dev.MSSClamped(),
@@ -311,6 +321,15 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, took *name.Takeover,
 		Guard:          gd.Mode().String(),
 		GuardBlocked:   gd.Blocked(),
 		GuardUnchecked: gd.Unchecked(),
+
+		NATOutgoing:  nt.Outgoing().String(),
+		NATIncoming:  nt.Incoming().String(),
+		NATSteered:   nt.Steered(),
+		NATPresented: nt.Presented(),
+		NATUnchecked: nt.Unchecked(),
+	}
+	if real := self.RealIPs(); len(real) > 0 {
+		st.RealIP = real[0].String()
 	}
 	live := dev.Status()
 	for _, p := range cfg.Peers {
@@ -351,17 +370,18 @@ type device interface {
 	Reload(*config.Config) error
 }
 
-type resolver interface {
-	SetTable(*name.Table)
-}
-
 type gate interface {
 	Check(guard.Config) error
 	Apply(guard.Config) error
 }
 
+type rewriter interface {
+	Check(nat.Config) error
+	Apply(nat.Config) error
+}
+
 func reload(dir string, live *atomic.Pointer[config.Config], dev device,
-	dnsSrv resolver, gd gate, logf func(string, ...any)) (string, error) {
+	gd gate, nt rewriter, logf func(string, ...any)) (string, error) {
 
 	cur, err := config.Load(dir)
 	if err != nil {
@@ -384,24 +404,26 @@ func reload(dir string, live *atomic.Pointer[config.Config], dev device,
 		return "바뀐 것이 없습니다.\n", nil
 	}
 
-	table, err := name.NewTable(cur)
-	if err != nil {
-		return "", fmt.Errorf("%w. 아무것도 바꾸지 않았다", err)
-	}
-	// 규칙을 걸기 전에 nft가 받아들이는지 먼저 본다. 거는 것이 마지막 걸음이라
+	// 규칙을 걸기 전에 nft가 받아들이는지 먼저 본다. 거는 것이 뒤의 걸음이라
 	// 거기서 실패하면 앞서 바꾼 것이 이미 걸려 있게 된다.
 	if err := gd.Check(guardConfig(cur)); err != nil {
+		return "", fmt.Errorf("%w. 아무것도 바꾸지 않았다", err)
+	}
+	if err := nt.Check(natConfig(cur)); err != nil {
 		return "", fmt.Errorf("%w. 아무것도 바꾸지 않았다", err)
 	}
 
 	old := live.Load()
 	if err := dev.Reload(cur); err != nil {
-		return "", back(old, dev, dnsSrv, gd, err, logf)
+		return "", back(old, dev, gd, nt, err, logf)
 	}
-	dnsSrv.SetTable(table)
 	// 이 머신의 서비스 목록이 바뀌었으면 닫을 포트도 바뀐다.
 	if err := gd.Apply(guardConfig(cur)); err != nil {
-		return "", back(old, dev, dnsSrv, gd, err, logf)
+		return "", back(old, dev, gd, nt, err, logf)
+	}
+	// 상대의 실제 IP나 서비스가 바뀌었으면 돌릴 연결도 바뀐다.
+	if err := nt.Apply(natConfig(cur)); err != nil {
+		return "", back(old, dev, gd, nt, err, logf)
 	}
 	live.Store(cur)
 
@@ -416,23 +438,16 @@ var errMixed = errors.New("이 머신은 반쯤 걸린 상태다")
 
 // back은 설정을 걸다 실패했을 때 앞서 걸려 있던 것으로 되돌린다.
 //
-// 설정을 거는 일은 세 걸음이다. wg의 상대와 정책을 바꾸고, 이름 표를 바꾸고,
-// 직통 경로 규칙을 건다. 그 사이에서 실패했을 때 되돌리지 않으면, csa는 새
-// 정책을 집행하면서 csa status는 옛 설정을 말한다. 새 정책이 권한을 넓히는
-// 것이면 운영자는 그것이 걸리지 않았다고 여긴다.
-func back(old *config.Config, dev device, dnsSrv resolver, gd gate,
+// 설정을 거는 일은 세 걸음이다. wg의 상대와 정책을 바꾸고, 직통 경로 규칙을
+// 걸고, 주소 바꾸기 표를 다시 만든다. 그 사이에서 실패했을 때 되돌리지 않으면,
+// csa는 새 정책을 집행하면서 csa status는 옛 설정을 말한다. 새 정책이 권한을
+// 넓히는 것이면 운영자는 그것이 걸리지 않았다고 여긴다.
+func back(old *config.Config, dev device, gd gate, nt rewriter,
 	cause error, logf func(string, ...any)) error {
 	return rollback(cause, logf,
-		func() error {
-			table, err := name.NewTable(old)
-			if err != nil {
-				return err
-			}
-			dnsSrv.SetTable(table)
-			return nil
-		},
 		func() error { return dev.Reload(old) },
 		func() error { return gd.Apply(guardConfig(old)) },
+		func() error { return nt.Apply(natConfig(old)) },
 	)
 }
 
