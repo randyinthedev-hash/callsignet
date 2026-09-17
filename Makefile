@@ -7,6 +7,7 @@ help:
 	@echo "build       csa를 만든다"
 	@echo "test        시험을 돌린다"
 	@echo "tunnel      csa 둘이 터널을 세우는지 확인       (sudo)"
+	@echo "steer       실제 IP로 부른 연결을 터널로 돌리는지 확인 (sudo)"
 	@echo "build-static  Rocky에서도 도는 csa를 만든다"
 	@echo "dist        설치 묶음을 만든다 (dist/out/csa-linux-amd64.tar.gz)"
 	@echo "vm          VM 둘에서 리졸버 갈래를 확인          (sudo)"
@@ -34,7 +35,7 @@ cryptokey: preflight
 	$(CK)/check.sh
 	$(CK)/teardown.sh
 
-.PHONY: build build-static dist test tunnel vm vm-teardown vm-install vm-install-teardown
+.PHONY: build build-static dist test tunnel steer vm vm-teardown vm-install vm-install-teardown
 build:
 	go build -o csa ./cmd/csa
 test:
@@ -42,6 +43,8 @@ test:
 	go test ./...
 tunnel:
 	poc/tunnel/run.sh
+steer:
+	poc/steer/run.sh
 
 build-static:
 	CGO_ENABLED=0 go build -o csa-static ./cmd/csa
