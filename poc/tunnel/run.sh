@@ -7,6 +7,11 @@
 # 보이는 머신이다. 두 모드가 한 자리에서 함께 확인된다.
 set -euo pipefail
 
+# csa는 개인키와 사전 공유키가 놓인 자리와 그 위의 모든 디렉터리를 다른 사용자가
+# 고칠 수 없어야 받아들인다. 리포 체크아웃이 0775인 머신이 있으므로 작업 자리는
+# 리포 밖에 두고 umask를 못박는다. /var/tmp는 끈적임 비트가 서 있어 거절되지 않는다.
+umask 022
+
 NS_A=cs-a
 NS_B=cs-b
 # csa를 돌리지 않는 머신이다. peers.toml에도 정책에도 없다. 직통 경로를 재는 데 쓴다.
@@ -25,7 +30,7 @@ WG_IF=cs0
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-WORK="$HERE/_work"
+WORK=/var/tmp/csn-tunnel-work
 . "$HERE/../lib.sh"
 
 if [ "$(id -u)" -ne 0 ]; then echo "root가 필요합니다: sudo $0" >&2; exit 1; fi
