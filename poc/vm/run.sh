@@ -324,12 +324,13 @@ on_a() { $SSH "root@$IP_A" "$1" 2>/dev/null || true; }
 on_b() { $SSH "root@$IP_B" "$1" 2>/dev/null || true; }
 # try_a는 성공했는지가 곧 검사인 자리에 쓴다.
 try_a() { $SSH "root@$IP_A" "$1" >/dev/null 2>&1; }
-# log_has는 그 머신의 csa 로그에 문구가 나타나기를 5초까지 기다린다. 한 번만 보면
-# SSH가 한 번 어긋나거나 로그가 늦게 쓰여도 틀림으로 찍힌다. 실제로 그런 일이
-# 있었다. 로그에는 있는데 검사가 틀림으로 찍혔다.
+# log_has는 그 머신의 csa 로그에 문구가 나타나기를 5초까지 기다린다. 로그를
+# 가져와 이 호스트에서 견준다. 문구를 저쪽 셸에 넘겨 저쪽 grep으로 보면 로케일과
+# 따옴표가 끼어든다. 실제로 로그에 있는 줄을 저쪽 grep이 찾지 못한 일이 있었다.
+# 한 번만 보지 않는 까닭은 SSH가 한 번 어긋나거나 로그가 늦게 쓰일 수 있기 때문이다.
 log_has() { # 주소 문구
   for _ in $(seq 10); do
-    if $SSH "root@$1" "grep -q \"$2\" /var/log/csa.log" 2>/dev/null; then return 0; fi
+    if $SSH "root@$1" 'cat /var/log/csa.log' 2>/dev/null | grep -q -- "$2"; then return 0; fi
     sleep 0.5
   done
   return 1
