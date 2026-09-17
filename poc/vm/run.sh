@@ -324,6 +324,16 @@ on_a() { $SSH "root@$IP_A" "$1" 2>/dev/null || true; }
 on_b() { $SSH "root@$IP_B" "$1" 2>/dev/null || true; }
 # try_a는 성공했는지가 곧 검사인 자리에 쓴다.
 try_a() { $SSH "root@$IP_A" "$1" >/dev/null 2>&1; }
+# log_has는 그 머신의 csa 로그에 문구가 나타나기를 5초까지 기다린다. 한 번만 보면
+# SSH가 한 번 어긋나거나 로그가 늦게 쓰여도 틀림으로 찍힌다. 실제로 그런 일이
+# 있었다. 로그에는 있는데 검사가 틀림으로 찍혔다.
+log_has() { # 주소 문구
+  for _ in $(seq 10); do
+    if $SSH "root@$1" "grep -q \"$2\" /var/log/csa.log" 2>/dev/null; then return 0; fi
+    sleep 0.5
+  done
+  return 1
+}
 
 echo
 echo "== 건드리지 않는 것"
@@ -358,10 +368,9 @@ got=$(on_a "timeout 5 bash -c 'exec 3<>/dev/tcp/$IP_B/8080; printf \"ping\\n\" >
 if [ "$got" = "pong:ping" ]; then
   say ok "진짜 NIC에서도 실제 IP로 부른 TCP가 터널로 간다"
 else say 틀림 "실제 IP로 TCP가 서지 않는다: ${got:-없음}"; on_a 'tail -10 /var/log/csa.log' | sed 's/^/        /'; fi
-sleep 1
-if on_b 'grep -q "들어온 연결을 받았습니다.*상대 vm-a.*:8080" /var/log/csa.log && echo yes' | grep -q yes; then
+if log_has "$IP_B" "들어온 연결을 받았습니다.*상대 vm-a.*:8080"; then
   say ok "받는 쪽 csa의 기록에 peer-id가 남는다. 터널로 왔다"
-else say 틀림 "받는 쪽 csa의 기록에 그 연결이 없다"; fi
+else say 틀림 "받는 쪽 csa의 기록에 그 연결이 없다"; on_b 'grep "들어온 연결" /var/log/csa.log' | sed 's/^/        /'; fi
 if [ "$(on_b 'head -1 /var/log/serve.out')" = "$IP_A" ]; then
   say ok "실제 IP에 바인딩한 서버가 받고 상대를 보낸 쪽의 실제 IP로 본다. 엄격한 역경로 검사에서도 그렇다"
 else say 틀림 "서버가 보는 상대 주소가 다르다: $(on_b 'head -1 /var/log/serve.out')"; fi
@@ -384,7 +393,7 @@ serve(9999)
 \" >/dev/null 2>&1 &
 sleep 1"
 knock() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$2; head -1 <&3" 2>/dev/null || true; }
-if on_b 'grep -q "직통 경로를 닫았습니다" /var/log/csa.log && echo yes' | grep -q yes; then
+if log_has "$IP_B" "직통 경로를 닫았습니다"; then
   say ok "Rocky에서 csa가 직통 경로를 닫았다"
 else say 틀림 "Rocky에서 닫지 못했다"; on_b 'grep "직통 경로" /var/log/csa.log' | sed 's/^/        /'; fi
 if on_b 'systemctl is-active firewalld' | grep -q '^active'; then
