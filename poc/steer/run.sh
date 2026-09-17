@@ -60,12 +60,24 @@ cleanup() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
   done
   # 앞선 실행이 남긴 것도 거둔다. csa와 앱 노릇 프로그램은 모두 작업 자리를
-  # 인자로 받으므로 그 자리로 찾는다.
+  # 인자로 받으므로 그 자리로 찾는다. csa는 멈추면서 인터페이스와 표를
+  # 되돌리므로 다 사라질 때까지 기다린다.
   pkill -f "$WORK/" 2>/dev/null || true
-  sleep 0.3
+  for _ in $(seq 50); do
+    pgrep -f "$WORK/" >/dev/null 2>&1 || break
+    sleep 0.2
+  done
   ip netns delete "$NS_A" 2>/dev/null || true
   ip netns delete "$NS_B" 2>/dev/null || true
-  ip link delete "$BR" 2>/dev/null || true
+  for l in "v-$NS_A" "v-$NS_B" "$BR"; do ip link delete "$l" 2>/dev/null || true; done
+  # 네임스페이스는 그 안에서 도는 프로세스가 모두 끝난 뒤에 사라지고, 그 안의
+  # 인터페이스와 짝인 veth는 그보다 늦게 사라진다. 이름이 비기를 기다린다.
+  # 그러지 않으면 다음 실행이 같은 이름을 만들지 못한다.
+  for _ in $(seq 50); do
+    if ! ip link show "v-$NS_A" >/dev/null 2>&1 && ! ip link show "v-$NS_B" >/dev/null 2>&1 &&
+       ! ip link show "$BR" >/dev/null 2>&1; then break; fi
+    sleep 0.2
+  done
   rm -rf "/etc/netns/$NS_A" "/etc/netns/$NS_B"
 }
 trap cleanup EXIT
