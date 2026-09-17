@@ -264,10 +264,13 @@ func TestApply는nft가없으면막는다(t *testing.T) {
 // onlyAddr은 이 머신에 그 주소 하나만 붙어 있는 것처럼 꾸민다.
 func onlyAddr(t *testing.T, cidr string) {
 	t.Helper()
-	_, n, err := net.ParseCIDR(cidr)
+	ip, n, err := net.ParseCIDR(cidr)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// net.InterfaceAddrs가 내놓는 IPNet의 IP는 대역 주소가 아니라 인터페이스에 붙은
+	// 주소다. ParseCIDR는 대역 주소로 깎으므로 되돌린다.
+	n.IP = ip
 	old := interfaceAddrs
 	interfaceAddrs = func() ([]net.Addr, error) { return []net.Addr{n}, nil }
 	t.Cleanup(func() { interfaceAddrs = old })
