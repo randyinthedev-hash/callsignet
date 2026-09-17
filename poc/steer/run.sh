@@ -59,6 +59,9 @@ cleanup() {
   for pid in "${PID_A:-}" "${PID_B:-}" "${SRV:-}"; do
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
   done
+  # 앞선 실행이 남긴 것도 거둔다. csa와 앱 노릇 프로그램은 모두 작업 자리를
+  # 인자로 받으므로 그 자리로 찾는다.
+  pkill -f "$WORK/" 2>/dev/null || true
   sleep 0.3
   ip netns delete "$NS_A" 2>/dev/null || true
   ip netns delete "$NS_B" 2>/dev/null || true
@@ -247,8 +250,11 @@ echo "== 설정 검사"
 echo "== csa 기동"
 # CSA_DEBUG를 켜야 wg가 출발지 검사에서 버린 패킷을 적는다. 아래 검사 하나가 그
 # 기록을 본다.
-nsa env CSA_DEBUG=1 "$CSA" run -c "$WORK/a" > "$WORK/a/csa.log" 2>&1 & PID_A=$!
-nsb env CSA_DEBUG=1 "$CSA" run -c "$WORK/b" > "$WORK/b/csa.log" 2>&1 & PID_B=$!
+#
+# 배경에 띄울 때는 함수를 거치지 않는다. 함수를 배경에 띄우면 $!가 서브셸의 PID가
+# 되어 kill이 csa에 닿지 않고 csa가 고아로 남는다.
+ip netns exec "$NS_A" env CSA_DEBUG=1 "$CSA" run -c "$WORK/a" > "$WORK/a/csa.log" 2>&1 & PID_A=$!
+ip netns exec "$NS_B" env CSA_DEBUG=1 "$CSA" run -c "$WORK/b" > "$WORK/b/csa.log" 2>&1 & PID_B=$!
 for _ in $(seq 30); do
   if nsa ip link show "$WG_IF" >/dev/null 2>&1 && nsb ip link show "$WG_IF" >/dev/null 2>&1; then break; fi
   sleep 0.2
@@ -428,7 +434,7 @@ fi
 
 echo
 echo "== 실제 IP로 부른 UDP"
-nsb python3 "$WORK/udp-serve.py" "$IP_B" "$PORT_BEACON" > "$WORK/udp-serve.out" 2>&1 & SRV=$!
+ip netns exec "$NS_B" python3 "$WORK/udp-serve.py" "$IP_B" "$PORT_BEACON" > "$WORK/udp-serve.out" 2>&1 & SRV=$!
 sleep 0.7
 read -r why got from < <(nsa python3 "$WORK/udp-dial.py" "$IP_B" "$PORT_BEACON")
 if [ "$why" = reply ] && [ "$got" = "pong:ping" ] && [ "$from" = "$IP_B" ]; then
@@ -438,11 +444,26 @@ else
 fi
 stop_serve
 
+# 받는 쪽 표의 계수기는 상대 csa를 멈추기 전에 읽는다. 받는 쪽 규칙이 실제로
+# 걸렸는지는 이 계수기만 말해 준다. 되돌아가는 패킷은 규칙이 아니라 연결 추적이
+# 되돌리므로 보내는 쪽의 받는 방향 계수기는 0이 맞다.
+RULES_B=$(nsb nft list table ip "$NAT" 2>&1 || true)
+
 echo
 echo "== 상대 csa가 죽었을 때"
 # 지금은 상대 csa가 멈추면 그쪽 nftables 표가 사라져 직통 연결이 인증 없이 통한다.
 # 보내는 쪽에 이 표가 있으면 그 연결이 터널로 들어가 서지 않아야 한다.
-kill "$PID_B"; wait "$PID_B" 2>/dev/null || true; PID_B=""
+kill "$PID_B"; wait "$PID_B" 2>/dev/null || true
+for _ in $(seq 25); do
+  kill -0 "$PID_B" 2>/dev/null || break
+  sleep 0.2
+done
+if kill -0 "$PID_B" 2>/dev/null; then
+  bad "상대 csa가 멈추지 않는다"
+else
+  ok "상대 csa가 멈췄다"
+fi
+PID_B=""
 for _ in $(seq 25); do
   nsb nft list table inet callsignet >/dev/null 2>&1 || break
   sleep 0.2
@@ -474,6 +495,9 @@ stop_serve
 echo
 echo "== 보내는 쪽 표와 계수기"
 echo "$RULES_A" | sed 's/^/    /'
+echo
+echo "== 받는 쪽 표와 계수기"
+echo "$RULES_B" | sed 's/^/    /'
 
 mkdir -p "$RESULTS"; own "$RESULTS"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
@@ -493,10 +517,16 @@ REPORT="$RESULTS/steer-$TS.md"
     echo "예상과 다른 것이 있다. 표의 「틀림」을 본다."
   fi
   echo
-  echo "보내는 쪽(srv-a)의 표와 계수기:"
+  echo "보내는 쪽(srv-a)의 표와 계수기. 받는 방향 체인이 0인 것은 되돌아가는 패킷을 규칙이 아니라 연결 추적이 되돌리기 때문이다:"
   echo
   echo '```'
   echo "$RULES_A"
+  echo '```'
+  echo
+  echo "받는 쪽(srv-b)의 표와 계수기. 상대 csa를 멈추기 전에 읽었다:"
+  echo
+  echo '```'
+  echo "$RULES_B"
   echo '```'
 } > "$REPORT"
 own "$REPORT"
