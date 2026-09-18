@@ -172,7 +172,7 @@ done
 # 만든 아무 키다.
 echo "== 설정"
 PUB_FAR=$("$WORK/csa-a" genkey -o "$WORK/far.key" | sed -n 's/^공개키: //p')
-config() { # 로컬디렉터리 peer-id 터널IP 자기공개키
+config() { # 로컬디렉터리 peer-id 터널IP 자기공개키 실제IP
   mkdir -p "$WORK/$1"
   cat > "$WORK/$1/csa.toml" <<TOML
 peer-id     = "$2"
@@ -189,7 +189,7 @@ TOML
 peer-id    = "$2"
 public-key = "$4"
 tunnel-ip  = "$3"
-endpoints  = ["$3:$PORT"]
+endpoints  = ["$5:$PORT"]
 services   = [{ app = "billing", port = 8080 }]
 
 [[peer]]
@@ -309,7 +309,7 @@ walk() { # 이름 주소 peer-id 터널IP
   # 3. 설정을 둔다. 문서의 명령 그대로다.
   local pub
   pub=$($run 'csa genkey -o /etc/callsignet/private.key' | sed -n 's/^공개키: //p')
-  config "$name" "$pid" "$tip" "$pub"
+  config "$name" "$pid" "$tip" "$pub" "$ip"
   $SCP "$WORK/$name/csa.toml" "$WORK/$name/peers.toml" "$WORK/$name/policy.toml" "root@$ip:/etc/callsignet/" >/dev/null
   if $run 'install -d -m 700 /etc/callsignet/psk && csa check -c /etc/callsignet >/dev/null'; then
     say ok "$name" "설정을 두면 csa check가 지난다"
