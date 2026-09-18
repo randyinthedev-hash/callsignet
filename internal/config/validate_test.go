@@ -3,7 +3,9 @@ package config
 import (
 	"bytes"
 	"crypto/ecdh"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,19 +95,17 @@ func TestRealIPs(t *testing.T) {
 	}
 }
 
-// TestDeprecated는 0.1.x의 열쇠가 남아 있어도 기동을 막지 않고 알리기만 하는지 본다.
-func TestDeprecated(t *testing.T) {
-	c := good(t)
-	c.Self.Domain = "cs.example.internal"
-	c.Self.DNS = DNS{Listen: "127.0.53.1:53", TTL: 300}
-	if p := c.Validate(); len(p) != 0 {
-		t.Fatalf("더 쓰지 않는 열쇠를 어긋난 것으로 보았다: %v", p)
+// TestHashFiles는 설정 해시의 계산이 정한 모양 그대로인지 본다. 설정을 두는 쪽이
+// 같은 계산을 하므로 모양이 바뀌면 그쪽이 csa의 답을 알아보지 못한다.
+func TestHashFiles(t *testing.T) {
+	csa, peers, policy := []byte("a = 1\n"), []byte("[[peer]]\n"), []byte("")
+	sum := sha256.Sum256([]byte("csa.toml\n6\na = 1\npeers.toml\n9\n[[peer]]\npolicy.toml\n0\n"))
+	want := hex.EncodeToString(sum[:])
+	if got := HashFiles(csa, peers, policy); got != want {
+		t.Fatalf("해시가 정한 모양과 다르다.\n얻음 %s\n기대 %s", got, want)
 	}
-	if got := c.Self.Deprecated(); len(got) != 2 {
-		t.Fatalf("더 쓰지 않는 열쇠 둘을 알려야 하는데 %v", got)
-	}
-	if got := good(t).Self.Deprecated(); len(got) != 0 {
-		t.Fatalf("없는 열쇠를 알렸다: %v", got)
+	if HashFiles(csa, peers, []byte("x")) == want {
+		t.Fatal("내용이 다른데 해시가 같다")
 	}
 }
 
@@ -131,6 +131,9 @@ func TestValidate(t *testing.T) {
 		{"endpoints의 IP가 다른 peer의 addresses와 같다", func(c *Config) {
 			c.Peers[0].Addresses = []string{"10.0.5.2"}
 		}, "실제 IP가 두 peer"},
+		{"addresses가 없는데 endpoints의 IP가 터널 대역 안이다", func(c *Config) {
+			c.Peers[1].Endpoints = []string{"10.91.0.9:51820"}
+		}, "endpoints의 IP가 tunnel-cidr 안"},
 		{"nat.outgoing이 모르는 값이다", func(c *Config) { c.Self.NAT.Outgoing = "돌려" }, "nat.outgoing은"},
 		{"nat.incoming이 모르는 값이다", func(c *Config) { c.Self.NAT.Incoming = "보여" }, "nat.incoming은"},
 		{"real-ip인데 이 머신의 실제 IP를 모른다", func(c *Config) {
@@ -217,6 +220,8 @@ func TestLoad모르는열쇠를거절한다(t *testing.T) {
 		files map[string]string
 	}{
 		{"csa.toml의 오타", map[string]string{"csa.toml": "peer-id = \"srv-a\"\n\n[psk]\nmodee = \"required\"\n"}},
+		{"0.1.x의 domain", map[string]string{"csa.toml": "peer-id = \"srv-a\"\ndomain = \"cs.example.internal\"\n"}},
+		{"0.1.x의 [dns]", map[string]string{"csa.toml": "peer-id = \"srv-a\"\n\n[dns]\nlisten = \"127.0.53.1:53\"\n"}},
 		{"peers.toml의 오타", map[string]string{"peers.toml": "[[peer]]\npeer-id = \"srv-a\"\npublik-key = \"x\"\n"}},
 		{"policy.toml의 오타", map[string]string{"policy.toml": "outbond = [\"srv-b/api\"]\n"}},
 	}
@@ -292,6 +297,27 @@ allow = ["srv-a"]
 	}
 	if c.Find("srv-a") == nil || c.Find("없음") != nil {
 		t.Fatal("Find가 잘못 찾는다")
+	}
+	// 해시는 읽은 파일의 바이트 그대로에서 나온다.
+	var raw [3][]byte
+	for i, n := range FileNames {
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw[i] = b
+	}
+	if want := HashFiles(raw[0], raw[1], raw[2]); c.Hash != want {
+		t.Fatalf("Load의 해시가 파일의 해시와 다르다. %s, 기대 %s", c.Hash, want)
+	}
+	// 파일이 바뀌면 다시 읽은 설정의 해시도 바뀐다.
+	write("policy.toml", "outbound = []\n")
+	c2, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c2.Hash == c.Hash {
+		t.Fatal("policy.toml이 바뀌었는데 해시가 같다")
 	}
 }
 

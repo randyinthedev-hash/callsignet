@@ -6,7 +6,9 @@
 package config
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -28,26 +30,6 @@ type Self struct {
 	Guard      Guard  `toml:"guard"`
 	NAT        NAT    `toml:"nat"`
 	PSK        PSK    `toml:"psk"`
-
-	// Domain과 DNS는 0.1.x의 csa가 이름을 풀 때 쓰던 값이다. 0.2.0부터 csa는
-	// 이름을 풀지 않는다. 이 열쇠를 모르는 열쇠로 거절하면 옛 csa.toml을 가진
-	// 머신이 새 csa로 올라갈 때 모두 멈추므로, 0.2.x에서는 읽되 더 쓰지 않는다고
-	// 알린다. 0.3.0부터 거절한다.
-	Domain string `toml:"domain"`
-	DNS    DNS    `toml:"dns"`
-}
-
-// Deprecated는 더 쓰지 않는 열쇠가 csa.toml에 남아 있으면 그 사실을 돌려준다.
-// 기동을 막지는 않는다.
-func (s Self) Deprecated() []string {
-	var out []string
-	if s.Domain != "" {
-		out = append(out, "csa.toml의 domain은 더 쓰지 않는다. csa는 이름을 풀지 않는다. 지우라")
-	}
-	if s.DNS != (DNS{}) {
-		out = append(out, "csa.toml의 [dns]는 더 쓰지 않는다. csa는 이름을 풀지 않는다. 지우라")
-	}
-	return out
 }
 
 // NAT은 실제 IP와 터널 IP를 서로 바꾸는 표를 어떻게 걸지 정한다.
@@ -112,12 +94,6 @@ func (s Self) TunMTU() int {
 		return DefaultTunMTU
 	}
 	return s.Tun.MTU
-}
-
-// DNS는 0.1.x의 열쇠다. Self.Deprecated를 보라.
-type DNS struct {
-	Listen string `toml:"listen"`
-	TTL    int    `toml:"ttl"`
 }
 
 // Service는 어느 peer에서 도는 앱 하나다.
@@ -192,6 +168,12 @@ type Config struct {
 	Peers  []Peer
 	Policy Policy
 
+	// Hash는 이 설정을 읽은 세 파일의 바이트로 만든 값이다. Load가 파싱한
+	// 바로 그 바이트로 계산한다. csa status가 이 값을 내어, 설정을 두는 쪽이
+	// csa가 어느 파일을 물고 있는지 확인한다. 개인키나 사전 공유키나 그 밖의
+	// 파일은 들지 않는다. 계산은 HashFiles에 있다.
+	Hash string
+
 	// secOnce와 sec는 이 설정이 가리키는 비밀 파일을 한 번만 읽으려고 둔다.
 	// Secrets가 채운다.
 	secOnce sync.Once
@@ -255,42 +237,68 @@ func (c *Config) readSecrets() *Secrets {
 	return s
 }
 
+// FileNames는 설정 파일 셋의 이름이다. HashFiles가 이 순서로 잇는다.
+var FileNames = [3]string{"csa.toml", "peers.toml", "policy.toml"}
+
 // Load는 디렉터리에서 세 파일을 읽는다. 검사하지는 않는다.
 func Load(dir string) (*Config, error) {
 	var c Config
-	if err := decode(filepath.Join(dir, "csa.toml"), &c.Self); err != nil {
+	var raw [3][]byte
+	var err error
+	if raw[0], err = decode(filepath.Join(dir, FileNames[0]), &c.Self); err != nil {
 		return nil, err
 	}
 	var pf peersFile
-	if err := decode(filepath.Join(dir, "peers.toml"), &pf); err != nil {
+	if raw[1], err = decode(filepath.Join(dir, FileNames[1]), &pf); err != nil {
 		return nil, err
 	}
 	c.Peers = pf.Peer
-	if err := decode(filepath.Join(dir, "policy.toml"), &c.Policy); err != nil {
+	if raw[2], err = decode(filepath.Join(dir, FileNames[2]), &c.Policy); err != nil {
 		return nil, err
 	}
+	c.Hash = HashFiles(raw[0], raw[1], raw[2])
 	return &c, nil
 }
 
-// decode는 파일 하나를 읽고 모르는 열쇠가 있으면 거절한다.
+// HashFiles는 세 설정 파일의 바이트로 설정의 해시를 만든다. csa.toml, peers.toml,
+// policy.toml 순서로 파일 이름, 줄바꿈, 바이트 길이(십진수), 줄바꿈, 내용을
+// 이어 붙인 것의 SHA-256이고 16진수 64글자다. 설정을 두는 쪽이 같은 계산을 해서
+// csa status의 config-hash와 견준다.
+func HashFiles(csa, peers, policy []byte) string {
+	h := sha256.New()
+	for i, b := range [3][]byte{csa, peers, policy} {
+		fmt.Fprintf(h, "%s\n%d\n", FileNames[i], len(b))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// decode는 파일 하나를 읽고 모르는 열쇠가 있으면 거절한다. 파싱한 바이트를
+// 그대로 돌려준다. Hash는 그 바이트로 만든다. 파싱한 뒤 파일을 다시 읽으면 그
+// 사이에 바뀐 파일의 해시를 낼 수 있다.
 //
 // 모르는 열쇠를 조용히 버리면 보안 설정이 소리 없이 뒤로 물러난다. `[psk]`의
 // `mode`를 `modee`로 잘못 적으면 mode가 빈 값이 되고, 빈 값은 optional과 같다.
 // 운영자는 사전 공유키를 반드시 쓰게 했다고 여기는데 csa는 키 없이 기동한다.
-func decode(path string, v any) error {
-	md, err := toml.DecodeFile(path, v)
+// 0.1.x의 domain과 [dns]도 같은 길로 거절한다. 0.2.0의 csa는 이름을 풀지 않는다.
+func decode(path string, v any) ([]byte, error) {
+	b, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("%s을 읽지 못했다: %w", filepath.Base(path), err)
+		return nil, fmt.Errorf("%s을 읽지 못했다: %w", filepath.Base(path), err)
+	}
+	md, err := toml.Decode(string(b), v)
+	if err != nil {
+		return nil, fmt.Errorf("%s을 읽지 못했다: %w", filepath.Base(path), err)
 	}
 	if left := md.Undecoded(); len(left) > 0 {
 		names := make([]string, 0, len(left))
 		for _, k := range left {
 			names = append(names, k.String())
 		}
-		return fmt.Errorf("%s에 모르는 열쇠가 있다. 오타인지 보라: %s",
+		return nil, fmt.Errorf("%s에 모르는 열쇠가 있다. 오타인지 보라: %s",
 			filepath.Base(path), strings.Join(names, ", "))
 	}
-	return nil
+	return b, nil
 }
 
 // PSKPath는 그 상대와 쓰는 사전 공유키 파일의 자리다. 디렉터리를 적지 않았으면

@@ -262,7 +262,13 @@ func (c *Config) checkPeers() []string {
 				p = append(p, fmt.Sprintf("addresses가 tunnel-cidr 안이다. 실제 IP를 적는 자리다: %s의 %s", peer.PeerID, s))
 			}
 		}
+		// addresses가 없으면 endpoints의 IP가 실제 IP가 된다. 그 주소도 터널
+		// 대역 밖이어야 한다. 위의 검사는 적은 addresses만 보므로 여기서 유효한
+		// 실제 IP를 다시 본다.
 		for _, a := range peer.RealIPs() {
+			if len(peer.Addresses) == 0 && cidrOK == nil && cidr.Contains(a) {
+				p = append(p, fmt.Sprintf("endpoints의 IP가 tunnel-cidr 안이다. addresses가 없으면 이 IP를 실제 IP로 쓴다: %s의 %s", peer.PeerID, a))
+			}
 			if other, dup := seenReal[a]; dup && other != peer.PeerID {
 				p = append(p, fmt.Sprintf("실제 IP가 두 peer에 나타난다: %s (%s, %s)", a, other, peer.PeerID))
 			} else {

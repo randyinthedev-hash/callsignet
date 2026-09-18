@@ -136,9 +136,6 @@ func runCheck(args []string) error {
 		return err
 	}
 	problems := cfg.Validate()
-	for _, w := range cfg.Self.Deprecated() {
-		fmt.Fprintln(os.Stderr, "알림: "+w)
-	}
 	if len(problems) == 0 {
 		fmt.Printf("설정을 확인했습니다. 상대 %d개, 서비스 %d개입니다.\n",
 			len(cfg.Peers), countServices(cfg))
@@ -170,9 +167,6 @@ func runRun(args []string) error {
 	}
 
 	logf := func(f string, a ...any) { log.Printf(f, a...) }
-	for _, w := range cfg.Self.Deprecated() {
-		logf("%s.", w)
-	}
 	dev, err := wgdev.Open(cfg, logf)
 	if err != nil {
 		return err
@@ -310,9 +304,10 @@ func statusJSON(cfg *config.Config, dev *wgdev.Device, gd *guard.Guard, nt *nat.
 	started time.Time) (string, error) {
 	self := cfg.Find(cfg.Self.PeerID)
 	st := control.Status{
-		PeerID:   cfg.Self.PeerID,
-		Iface:    dev.Name,
-		TunnelIP: self.TunnelIP,
+		PeerID:     cfg.Self.PeerID,
+		Iface:      dev.Name,
+		TunnelIP:   self.TunnelIP,
+		ConfigHash: cfg.Hash,
 		MTU:      cfg.Self.TunMTU(),
 		MaxMSS:   dev.MaxMSS(),
 		Clamped:  dev.MSSClamped(),

@@ -13,6 +13,12 @@ type Status struct {
 	PeerID   string `json:"peer-id"`
 	Iface    string `json:"iface"`
 	TunnelIP string `json:"tunnel-ip"`
+	// ConfigHash는 csa가 지금 따르는 설정 파일 셋의 해시다. 계산은
+	// config.HashFiles에 있다. csa가 파싱한 바로 그 바이트로 만든 값이고,
+	// reload가 실패해 앞의 설정으로 되돌아왔으면 앞의 값이다. 설정을 두는 쪽이
+	// csa가 어느 파일을 물고 있는지 여기서 확인한다. 개인키나 사전 공유키는
+	// 들지 않는다.
+	ConfigHash string `json:"config-hash"`
 	// RealIP는 터널로 온 연결의 목적지를 바꿀 이 머신의 실제 IP다. 모르면 비어 있다.
 	RealIP       string `json:"real-ip"`
 	Guard        string `json:"guard"`
@@ -58,6 +64,7 @@ func Format(s Status, now time.Time) string {
 	fmt.Fprintf(&b, "csa가 돕니다. 기동한 지 %s 지났습니다.\n", span(now.Sub(s.Since)))
 	fmt.Fprintf(&b, "peer-id %s, 인터페이스 %s, 터널 IP %s, 실제 IP %s\n",
 		s.PeerID, s.Iface, s.TunnelIP, dash(s.RealIP))
+	fmt.Fprintf(&b, "따르는 설정의 해시: %s\n", dash(s.ConfigHash))
 	fmt.Fprintf(&b, "MTU %d, TCP MSS 한도 %d바이트입니다. 지금까지 깎은 횟수 %d번입니다.\n",
 		s.MTU, s.MaxMSS, s.Clamped)
 	fmt.Fprintf(&b, "직통 경로를 닫는 방법: %s. 지금까지 막은 패킷 %d개입니다.\n",

@@ -516,12 +516,22 @@ PYREJECT
     ST_OK=1
     "$CSA" status -c "$WORK/a" 2>&1 | sed 's/^/    /'
     SJ=$("$CSA" status -c "$WORK/a" -json 2>/dev/null || true)
-    if ! python3 - "$SJ" "$IP_B" <<'PYCHECK'
-import json, sys
+    if ! python3 - "$SJ" "$IP_B" "$WORK/a" <<'PYCHECK'
+import hashlib, json, os, sys
 
 st = json.loads(sys.argv[1])
 peers = {p["peer-id"]: p for p in st["peers"]}
 ok = True
+
+
+def config_hash(d):
+    # 설계 문서 「명령줄」의 계산. 파일 이름, 줄바꿈, 바이트 길이, 줄바꿈, 내용.
+    h = hashlib.sha256()
+    for n in ("csa.toml", "peers.toml", "policy.toml"):
+        b = open(os.path.join(d, n), "rb").read()
+        h.update(("%s\n%d\n" % (n, len(b))).encode())
+        h.update(b)
+    return h.hexdigest()
 
 
 def check(cond, good, bad):
@@ -565,6 +575,9 @@ check(st.get("nat-steered", 0) > 0,
 check(st.get("nat-incoming") == "터널 IP",
       "앱에 보이는 주소의 모드를 보여 준다 (%s)" % st.get("nat-incoming"),
       "모드가 다르다: %s" % st.get("nat-incoming"))
+check(st.get("config-hash") == config_hash(sys.argv[3]),
+      "따르는 설정의 해시가 설정 파일 셋의 해시와 같다",
+      "config-hash가 다르다: %s" % st.get("config-hash"))
 
 sys.exit(0 if ok else 1)
 PYCHECK
@@ -585,10 +598,25 @@ PYCHECK
 
     rl "바뀐 것이 없으면 그렇게 알린다" "바뀐 것이 없습니다"
 
+    # 설정의 해시. 설계 문서 「명령줄」의 계산이다.
+    cfg_hash() { # 디렉터리
+      { for n in csa.toml peers.toml policy.toml; do
+          printf '%s\n%d\n' "$n" "$(stat -c %s "$1/$n")"; cat "$1/$n"; done; } | sha256sum | cut -d' ' -f1
+    }
+    live_hash() { # 디렉터리
+      "$CSA" status -c "$1" -json 2>/dev/null | sed -n 's/.*"config-hash":"\([0-9a-f]*\)".*/\1/p'
+    }
+    HASH_B0=$(cfg_hash "$WORK/b")
+
     # 어긋난 설정은 걸지 않는다. csa는 앞서 읽은 설정 그대로 계속 돈다.
     cp "$WORK/b/policy.toml" "$WORK/b/policy.toml.bak"
     printf '\n[[inbound]]\napp   = "없는앱"\nallow = ["srv-a"]\n' >> "$WORK/b/policy.toml"
     rl "어긋난 설정은 걸지 않는다" "아무것도 바꾸지 않았다"
+    if [ "$(live_hash "$WORK/b")" = "$HASH_B0" ]; then
+      printf '  ok    %s\n' "걸지 않은 설정은 해시에도 나타나지 않는다"
+    else
+      printf '  틀림  %s\n' "어긋난 설정을 걸지 않았는데 해시가 바뀌었다: $(live_hash "$WORK/b")"; RL_OK=0
+    fi
     mv "$WORK/b/policy.toml.bak" "$WORK/b/policy.toml"
 
     # csa.toml은 도는 중에 바꿀 수 없다.
@@ -600,6 +628,11 @@ PYCHECK
     # 정책을 바꾸고 다시 읽으면 집행이 달라진다. 앞에서 srv-b가 막았던 앱이다.
     printf '\n[[inbound]]\napp   = "%s"\nallow = ["srv-a"]\n' "$APP_SECRET" >> "$WORK/b/policy.toml"
     rl "정책을 바꾸면 바꾸었다고 알린다" "정책을 바꾸었습니다"
+    if [ "$(live_hash "$WORK/b")" = "$(cfg_hash "$WORK/b")" ] && [ "$(live_hash "$WORK/b")" != "$HASH_B0" ]; then
+      printf '  ok    %s\n' "다시 읽은 뒤의 해시가 새 설정 파일 셋의 해시다"
+    else
+      printf '  틀림  %s\n' "다시 읽었는데 해시가 새 파일과 다르다: $(live_hash "$WORK/b")"; RL_OK=0
+    fi
     ip netns exec "$NS_A" timeout 3 bash -c "echo > /dev/tcp/$WG_B/$PORT_SECRET" >/dev/null 2>&1 || true
     sleep 0.5
     if grep -q "들어온 연결을 받았습니다.*:$PORT_SECRET" "$WORK/b/csa.log"; then

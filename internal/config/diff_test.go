@@ -92,20 +92,12 @@ func TestDiffMarksSelfChange(t *testing.T) {
 	}
 }
 
-// nat 모드도 csa.toml에 있으므로 도는 중에 걸 수 없다. 더 쓰지 않는 열쇠를
-// 지우는 것은 바뀐 것으로 보지 않는다. 그것을 바뀐 것으로 보면 「지우라」고 알리고
-// 지우면 「다시 띄우라」고 하는 셈이다.
-func TestDiffSelfChangeNATAndDeprecated(t *testing.T) {
+// nat 모드도 csa.toml에 있으므로 도는 중에 걸 수 없다.
+func TestDiffSelfChangeNAT(t *testing.T) {
 	old, cur := pair(t)
 	cur.Self.NAT.Incoming = "tunnel-ip"
 	if c := Diff(old, cur); !c.SelfChanged {
 		t.Errorf("nat 모드가 바뀐 것을 표시해야 하는데 %+v", c)
-	}
-	old, cur = pair(t)
-	old.Self.Domain = "cs.example.internal"
-	old.Self.DNS = DNS{Listen: "127.0.53.1:53"}
-	if c := Diff(old, cur); c.Any() {
-		t.Errorf("더 쓰지 않는 열쇠를 지운 것은 바뀐 것이 아니어야 하는데 %+v", c)
 	}
 }
 
