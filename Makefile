@@ -41,6 +41,7 @@ build:
 test:
 	go vet ./...
 	go test ./...
+	tools/release/check_test.sh
 tunnel:
 	poc/tunnel/run.sh
 steer:
