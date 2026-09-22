@@ -343,6 +343,77 @@ func TestReload사전공유키를바꾸면다시건다(t *testing.T) {
 	}
 }
 
+// TestReload뜻이같은새파일을따른다는 상대의 순서만 다르거나 주석만 다른 파일 셋을
+// 다시 읽었을 때, csa가 아무것도 다시 걸지 않으면서도 그 파일 셋을 따르는
+// 설정으로 삼아 설정 해시가 새 파일을 가리키는지 본다.
+//
+// 설정을 두는 쪽은 csa status의 설정 해시로 csa가 자기가 둔 파일을 물고 있는지
+// 확인한다. 뜻이 같다고 옛 파일의 해시를 그대로 두면 그 쪽은 걸리지 않았다고
+// 보고 되돌린다.
+func TestReload뜻이같은새파일을따른다(t *testing.T) {
+	dir, writePSK := configDir(t)
+	quiet := func(string, ...any) {}
+
+	writePSK(1)
+	old, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var live atomic.Pointer[config.Config]
+	live.Store(old)
+
+	// 상대의 순서를 바꾸고 주석과 빈 줄을 더한다. 뜻은 그대로다.
+	peers, err := os.ReadFile(filepath.Join(dir, "peers.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := strings.Split(strings.TrimSpace(string(peers)), "\n\n")
+	if len(blocks) != 2 {
+		t.Fatalf("상대가 둘이어야 하는데 %d", len(blocks))
+	}
+	reordered := "# 순서만 바꾸었다\n\n" + blocks[1] + "\n\n\n" + blocks[0] + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "peers.toml"), []byte(reordered), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policy, err := os.ReadFile(filepath.Join(dir, "policy.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "policy.toml"), append([]byte("# 주석만 더했다\n"), policy...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	csaToml, err := os.ReadFile(filepath.Join(dir, "csa.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := config.HashFiles(csaToml, []byte(reordered), append([]byte("# 주석만 더했다\n"), policy...))
+	if want == old.Hash {
+		t.Fatal("파일이 바뀌었는데 해시가 같다")
+	}
+
+	dev, gd, nt := &fakeDevice{}, &fakeGate{}, &fakeRewriter{}
+	report, err := reload(dir, &live, dev, gd, nt, quiet)
+	if err != nil {
+		t.Fatalf("다시 읽지 못했다: %v", err)
+	}
+	if dev.reloads != 0 || gd.applies != 0 || nt.applies != 0 {
+		t.Fatalf("바뀐 것이 없는데 다시 걸었다. wg %d, 직통 경로 %d, 주소 바꾸기 %d", dev.reloads, gd.applies, nt.applies)
+	}
+	if !strings.Contains(report, "바뀐 것이 없습니다") {
+		t.Fatalf("바뀐 것이 없다고 알리지 않았다: %q", report)
+	}
+	if live.Load() == old {
+		t.Fatal("새 파일을 따르는 설정으로 삼지 않았다")
+	}
+	if got := live.Load().Hash; got != want {
+		t.Fatalf("설정 해시가 새 파일 셋을 가리키지 않는다. 얻은 것 %s, 기대 %s", got, want)
+	}
+	// 따르는 설정의 뜻은 그대로다.
+	if c := config.Diff(old, live.Load()); c.Any() {
+		t.Fatalf("따르는 설정의 뜻이 달라졌다: %+v", c)
+	}
+}
+
 // tempDir는 비밀 파일을 둘 수 있는 임시 자리다. t.TempDir는 umask를 따르므로
 // umask가 002인 머신에서는 그룹이 쓸 수 있는 자리가 되고, 비밀 파일이 놓인
 // 자리를 보는 검사가 그것을 거절한다. 두 단계 모두 0755로 맞춘다.

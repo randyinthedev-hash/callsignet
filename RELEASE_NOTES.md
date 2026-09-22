@@ -31,7 +31,7 @@
 
 **기동 검사가 바뀌었다.** `dns.listen`과 `domain`을 보는 검사와 53번 포트와 8비트 대역 검사가 빠졌다. 실제 IP(`addresses`, 없으면 `endpoints`의 IP)가 IPv4인지, 터널 대역 밖인지, 두 peer에 겹치지 않는지, `nat`의 값이 아는 값인지, 앱에 실제 IP를 보이려는데 이 머신의 실제 IP를 아는지 본다.
 
-**`csa status`가 바뀌었다.** 도메인과 이름 해석 자리 대신 이 머신의 실제 IP, 따르는 설정의 해시, 앱에 보이는 주소의 모드, 터널로 돌린 연결 수, 실제 IP로 보인 연결 수를 보여 준다. JSON의 열쇠는 `real-ip`, `config-hash`, `nat-outgoing`, `nat-incoming`, `nat-steered`, `nat-presented`, `nat-unchecked`다. `domain`과 `resolver`는 없다. `config-hash`는 csa가 파싱한 바로 그 바이트로 만든 설정 파일 셋의 SHA-256이다. csa를 부려 설정을 두는 프로그램이 csa가 그 파일을 물고 있는지 여기서 확인한다. 계산은 설계 문서의 「명령줄」에 있다.
+**`csa status`가 바뀌었다.** 도메인과 이름 해석 자리 대신 이 머신의 실제 IP, 따르는 설정의 해시, 앱에 보이는 주소의 모드, 터널로 돌린 연결 수, 실제 IP로 보인 연결 수를 보여 준다. JSON의 열쇠는 `real-ip`, `config-hash`, `nat-outgoing`, `nat-incoming`, `nat-steered`, `nat-presented`, `nat-unchecked`다. `domain`과 `resolver`는 없다. `config-hash`는 csa가 파싱한 바로 그 바이트로 만든 설정 파일 셋의 SHA-256이다. csa를 부려 설정을 두는 프로그램이 csa가 그 파일을 물고 있는지 여기서 확인한다. 상대의 순서만 다르거나 주석만 다른 파일 셋을 다시 읽으면 csa는 아무것도 다시 걸지 않되 그 파일 셋을 따르는 설정으로 삼으므로 이 값은 그 파일 셋의 것이 된다. 계산은 설계 문서의 「명령줄」에 있다.
 
 **`csa.service`가 `/etc`를 읽기 전용으로 둔다.** csa가 `/etc`에 쓰는 것이 없어졌다. `ProtectSystem=full`이다.
 

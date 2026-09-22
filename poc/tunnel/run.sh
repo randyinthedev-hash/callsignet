@@ -608,11 +608,38 @@ PYCHECK
     }
     HASH_B0=$(cfg_hash "$WORK/b")
 
+    # 뜻이 같은 새 파일. 상대의 순서를 바꾸고 주석과 빈 줄을 더한다. csa는 wg도
+    # 규칙도 표도 다시 걸지 않되, 그 파일 셋을 따르는 설정으로 삼아 해시가 새
+    # 파일을 가리켜야 한다. 설정을 두는 쪽은 그 해시로 csa가 자기가 둔 파일을
+    # 물고 있는지 확인한다. 표를 다시 걸지 않은 것은 규칙의 handle이 그대로인
+    # 것으로 잰다. 표를 다시 만들면 handle이 새로 매겨진다.
+    python3 - "$WORK/b/peers.toml" <<'PY'
+import sys
+p = sys.argv[1]
+blocks = open(p, encoding="utf-8").read().strip().split("\n\n")
+blocks.reverse()
+open(p, "w", encoding="utf-8").write("# 순서만 바꾸었다\n\n" + "\n\n\n".join(blocks) + "\n")
+PY
+    HANDLES_B0=$(ip netns exec "$NS_B" nft -a list table ip callsignet-nat 2>/dev/null | grep -o 'handle [0-9]*' | tr '\n' ' ')
+    rl "뜻이 같은 새 파일을 다시 읽으면 바뀐 것이 없다고 알린다" "바뀐 것이 없습니다"
+    if [ "$(live_hash "$WORK/b")" = "$(cfg_hash "$WORK/b")" ] && [ "$(live_hash "$WORK/b")" != "$HASH_B0" ]; then
+      printf '  ok    %s\n' "뜻이 같아도 해시는 지금 읽은 파일 셋을 가리킨다"
+    else
+      printf '  틀림  %s\n' "뜻이 같은 새 파일의 해시를 따르지 않는다: $(live_hash "$WORK/b")"; RL_OK=0
+    fi
+    HANDLES_B1=$(ip netns exec "$NS_B" nft -a list table ip callsignet-nat 2>/dev/null | grep -o 'handle [0-9]*' | tr '\n' ' ')
+    if [ -n "$HANDLES_B0" ] && [ "$HANDLES_B0" = "$HANDLES_B1" ]; then
+      printf '  ok    %s\n' "뜻이 같으면 주소 바꾸기 표를 다시 걸지 않는다"
+    else
+      printf '  틀림  %s\n' "뜻이 같은데 표를 다시 걸었다. 앞 $HANDLES_B0 / 뒤 $HANDLES_B1"; RL_OK=0
+    fi
+    HASH_B1=$(cfg_hash "$WORK/b")
+
     # 어긋난 설정은 걸지 않는다. csa는 앞서 읽은 설정 그대로 계속 돈다.
     cp "$WORK/b/policy.toml" "$WORK/b/policy.toml.bak"
     printf '\n[[inbound]]\napp   = "없는앱"\nallow = ["srv-a"]\n' >> "$WORK/b/policy.toml"
     rl "어긋난 설정은 걸지 않는다" "아무것도 바꾸지 않았다"
-    if [ "$(live_hash "$WORK/b")" = "$HASH_B0" ]; then
+    if [ "$(live_hash "$WORK/b")" = "$HASH_B1" ]; then
       printf '  ok    %s\n' "걸지 않은 설정은 해시에도 나타나지 않는다"
     else
       printf '  틀림  %s\n' "어긋난 설정을 걸지 않았는데 해시가 바뀌었다: $(live_hash "$WORK/b")"; RL_OK=0
@@ -628,7 +655,7 @@ PYCHECK
     # 정책을 바꾸고 다시 읽으면 집행이 달라진다. 앞에서 srv-b가 막았던 앱이다.
     printf '\n[[inbound]]\napp   = "%s"\nallow = ["srv-a"]\n' "$APP_SECRET" >> "$WORK/b/policy.toml"
     rl "정책을 바꾸면 바꾸었다고 알린다" "정책을 바꾸었습니다"
-    if [ "$(live_hash "$WORK/b")" = "$(cfg_hash "$WORK/b")" ] && [ "$(live_hash "$WORK/b")" != "$HASH_B0" ]; then
+    if [ "$(live_hash "$WORK/b")" = "$(cfg_hash "$WORK/b")" ] && [ "$(live_hash "$WORK/b")" != "$HASH_B1" ]; then
       printf '  ok    %s\n' "다시 읽은 뒤의 해시가 새 설정 파일 셋의 해시다"
     else
       printf '  틀림  %s\n' "다시 읽었는데 해시가 새 파일과 다르다: $(live_hash "$WORK/b")"; RL_OK=0
