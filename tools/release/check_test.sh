@@ -1,17 +1,40 @@
 #!/usr/bin/env bash
 # tools/release/check.sh의 시험이다. GitHub에 닿지 않는다. gh는 대역이고 자산은 여기서 만든다.
 #
-# 보는 것 셋이다. 검증에 실패한 묶음은 풀지도 실행하지도 않는다. 체크섬 목록에 묶음이
-# 빠지면 거절한다. 상대 경로로 준 기록이 끝난 뒤에도 남는다.
+# 보는 것 넷이다. 검증에 실패한 묶음은 풀지도 실행하지도 않는다. 체크섬 목록에 묶음이
+# 빠지면 거절한다. 상대 경로로 준 기록이 끝난 뒤에도 남는다. 스크립트가 도는 작업 나무가
+# 기대 커밋이 아니거나 추적하는 파일이 고쳐져 있으면 gh를 받기도 전에 아무것도 하지 않고
+# 2로 끝난다.
 #
 # 풀렸는지는 tar 대역이 남긴 호출 기록으로 보고, 돌았는지는 실행 파일이 남긴 흔적으로
 # 본다. 둘은 다른 것이다. 부품 목록 검사는 go 대역으로 지나게 할 수 있어, 증명 검증만
 # 실패하는 경우와 검증을 모두 지나 실제로 풀리고 도는 대조군을 따로 본다.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-CHECK="$ROOT/tools/release/check.sh"
 T=$(mktemp -d /tmp/csn-release-check-test.XXXXXX); trap 'rm -rf "$T"' EXIT
-COMMIT=be3cbfeab0700e37b5c918a470d4a84430eba8a7
+
+# 스크립트는 자기가 도는 작업 나무의 HEAD가 기대 커밋인지 본다. 이 리포의 HEAD에 기대면 고치는 동안
+# 시험이 돌지 않으므로, 이 리포의 작업 나무 사본으로 시험용 저장소를 만들고 그 HEAD를 기대 커밋으로
+# 쓴다. 사본은 지금 작업 나무의 파일이다. 아직 커밋하지 않은 고침도 시험한다. results/는 뺀다.
+mkdir -p "$T/repo"
+python3 - "$ROOT" "$T/repo" <<'PY'
+import os, shutil, subprocess, sys
+src, dst = sys.argv[1], sys.argv[2]
+out = subprocess.run(["git", "-C", src, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+                     capture_output=True, check=True).stdout
+for f in out.split(b"\0"):
+    f = f.decode()
+    if not f or f.startswith("results/") or not os.path.isfile(os.path.join(src, f)):
+        continue
+    q = os.path.join(dst, f)
+    os.makedirs(os.path.dirname(q), exist_ok=True)
+    shutil.copy2(os.path.join(src, f), q)
+PY
+git -C "$T/repo" init -q
+git -C "$T/repo" add -A
+git -C "$T/repo" -c user.name=시험 -c user.email=test@example.invalid -c commit.gpgsign=false commit -q -m 시험
+COMMIT=$(git -C "$T/repo" rev-parse HEAD)
+CHECK="$T/repo/tools/release/check.sh"
 HOST=$(uname -m); case "$HOST" in x86_64) HOST=amd64 ;; aarch64) HOST=arm64 ;; esac
 FAILS=0
 pass() { echo "  ok    $1"; }
@@ -28,6 +51,7 @@ exec "$REAL_TAR" "\$@"
 STUB
 cat > "$T/bin/go" <<STUB
 #!/usr/bin/env bash
+echo "\$*" >> "$T/go.log"
 if [ -n "\${STUB_SBOM_OK:-}" ] && [ "\$1 \$2 \$3" = "run ./tools/sbom verify" ]; then echo "묶음이 계약대로입니다 (대역)"; exit 0; fi
 exec "$REAL_GO" "\$@"
 STUB
@@ -40,6 +64,7 @@ extracted() { grep -q -- "-xzf assets/csa-linux" "$T/tar.log" 2>/dev/null; }   #
 # 모든 증명 검증이 실패한다.
 cat > "$T/gh" <<'GH'
 #!/usr/bin/env bash
+echo "$*" >> "${STUB_GH_LOG:-/dev/null}"
 case "$1 $2" in
   "api repos/"*)
     case "$*" in *"--jq .object.type"*) echo commit ;; *) echo "$STUB_COMMIT" ;; esac ;;
@@ -54,7 +79,7 @@ case "$1 $2" in
 esac
 GH
 chmod +x "$T/gh"
-export STUB_COMMIT=$COMMIT CHECK_GH="$T/gh"
+export STUB_COMMIT=$COMMIT STUB_GH_LOG="$T/gh.log" CHECK_GH="$T/gh"
 
 # 자산 아홉. 묶음 안의 csa는 돌면 흔적 파일을 남기는 스크립트다. 부품 목록이 없으므로
 # 진짜 부품 목록 검사에는 걸린다.
@@ -110,6 +135,27 @@ grep -q '^| 틀림 | sha256sum.txt의 항목이 두 묶음과 다르다' "$T/out
 (cd "$T/a2" && { sha256sum csa-linux-amd64.tar.gz csa-linux-arm64.tar.gz; echo "0000000000000000000000000000000000000000000000000000000000000000  LICENSE"; } > sha256sum.txt)   # 예상 밖 항목
 set +e; (cd "$T" && "$CHECK" -tag v0.2.0 -commit "$COMMIT" -assets "$T/a2" -record out5.md > "$T/run5.log" 2>&1); rc=$?; set -e
 grep -q '^| 틀림 | sha256sum.txt의 항목이 두 묶음과 다르다' "$T/out5.md" && pass "예상 밖 항목이 있는 체크섬 목록을 거절한다" || fail "예상 밖 항목을 거절하지 않는다"
+
+echo "== 작업 나무가 기대 커밋이 아니면 아무것도 하지 않고 멈춘다"
+make_assets "$T/a6"
+OTHER=7777777777777777777777777777777777777777   # 이 작업 나무의 HEAD와 다른 40자리
+: > "$T/tar.log"; : > "$T/go.log"; : > "$T/gh.log"
+set +e; (cd "$T" && "$CHECK" -tag v0.2.0 -commit "$OTHER" -assets "$T/a6" -record guard1.md > "$T/run7.log" 2>&1); rc=$?; set -e
+[ "$rc" = 2 ] && pass "HEAD가 기대 커밋이 아니면 2로 끝난다" || { fail "종료 코드가 2가 아니다: $rc"; cat "$T/run7.log"; }
+if grep -q 'HEAD가 기대 커밋이 아니다' "$T/run7.log" && grep -q "HEAD:      $COMMIT" "$T/run7.log" && grep -q "기대 커밋: $OTHER" "$T/run7.log" && grep -q 'git worktree add --detach' "$T/run7.log"; then pass "어긋난 두 커밋과 작업 나무를 만드는 명령을 말한다"; else fail "안내가 다르다"; cat "$T/run7.log"; fi
+if [ ! -e "$T/guard1.md" ] && [ ! -s "$T/tar.log" ] && [ ! -s "$T/go.log" ] && [ ! -s "$T/gh.log" ]; then pass "기록을 남기지 않고 묶음을 풀지 않고 go와 gh를 부르지 않았다 (gh를 받기 전에 멈춘다)"; else fail "멈추기 전에 무언가 했다"; ls "$T"/guard1.md 2>/dev/null || true; cat "$T/tar.log" "$T/go.log" "$T/gh.log" | head -5; fi
+
+echo "== 기대 커밋과 같아도 추적하는 파일이 고쳐져 있으면 멈춘다"
+echo "고침" >> "$T/repo/README.md"
+: > "$T/tar.log"; : > "$T/go.log"; : > "$T/gh.log"
+set +e; (cd "$T" && "$CHECK" -tag v0.2.0 -commit "$COMMIT" -assets "$T/a6" -record guard2.md > "$T/run8.log" 2>&1); rc=$?; set -e
+if [ "$rc" = 2 ] && grep -q '추적하는 파일이 고쳐져 있다' "$T/run8.log" && grep -q 'README.md' "$T/run8.log" && [ ! -e "$T/guard2.md" ] && [ ! -s "$T/gh.log" ]; then pass "고쳐진 파일을 알리고 2로 끝나며 기록도 gh 호출도 없다"; else fail "고쳐진 작업 나무의 처리가 다르다 (rc $rc)"; cat "$T/run8.log"; fi
+git -C "$T/repo" checkout -q -- README.md
+
+echo "== 추적하지 않는 파일은 막지 않는다"
+mkdir -p "$T/repo/results"; echo "옛 기록" > "$T/repo/results/release-old.md"   # 이 스크립트가 남기는 기록이 이런 파일이다
+set +e; (cd "$T" && "$CHECK" -tag v0.2.0 -commit "$COMMIT" -assets "$T/a6" -record guard3.md > "$T/run9.log" 2>&1); rc=$?; set -e
+if [ "$rc" = 1 ] && [ -s "$T/guard3.md" ] && ! grep -Eq 'HEAD가 기대 커밋이 아니다|추적하는 파일이 고쳐져 있다' "$T/run9.log"; then pass "추적하지 않는 기록이 있어도 돌고 틀림이 있으면 1로 끝난다"; else fail "추적하지 않는 파일이 있다고 막았다 (rc $rc)"; cat "$T/run9.log" | head -5; fi
 
 echo
 if [ "$FAILS" = 0 ]; then echo "tools/release/check.sh의 시험을 모두 지났다"; else echo "tools/release/check.sh의 시험에서 $FAILS개가 틀렸다"; exit 1; fi

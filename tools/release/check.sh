@@ -4,7 +4,17 @@
 #   tools/release/check.sh -tag v0.2.0 -commit <태그가 가리키는 커밋 40자리> [-assets DIR] [-run ID] [-record 파일]
 #
 # 태그와 기대 커밋은 명시적으로 받는다. 이 머신의 태그를 믿지 않는다. 이 머신에 그 태그가
-# 있으면 기대 커밋과 같은지 함께 본다. -assets를 주면 그 디렉터리의 파일을 보고, 주지
+# 있으면 기대 커밋과 같은지 함께 본다.
+#
+# **이 스크립트가 도는 작업 나무가 기대 커밋이어야 한다.** `sbom verify`와 `go version`이 이 작업
+# 나무의 도구로 돌고, gh의 판과 체크섬을 이 작업 나무의 release.yml에서 읽고, 기록 머리말이 이
+# 작업 나무의 커밋을 소스로 적는다. 작업 나무의 HEAD가 기대 커밋과 다르거나 추적하는 파일이
+# 고쳐져 있으면 아무것도 하지 않고 2로 끝난다. 체크아웃이 앞 판에 머물러 있거나 이미 다음 커밋으로
+# 가 있을 때 다른 판의 도구로 검증하고도 지났다고 말하지 않으려는 것이다. 태그 커밋의 작업 나무를
+# 따로 만들어 거기서 돌린다.
+#
+#   git worktree add --detach /tmp/csn-<태그> <태그>
+#   /tmp/csn-<태그>/tools/release/check.sh -tag <태그> -commit $(git rev-parse <태그>^{commit}) -assets를 주면 그 디렉터리의 파일을 보고, 주지
 # 않으면 GitHub 릴리스에서 내려받는다. -run은 릴리스 워크플로의 실행 번호이고 기록에만
 # 적는다. -record는 기록 파일이고 기본은 results/release-<UTC 시각>.md다. 상대 경로는
 # 부른 자리를 기준으로 한다.
@@ -47,6 +57,28 @@ if [ -z "$TAG" ] || [ -z "$COMMIT" ]; then
   echo "사용법: $0 -tag <태그> -commit <커밋 40자리> [-assets DIR] [-run ID] [-record 파일]" >&2; exit 2
 fi
 if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then echo "커밋은 40자리 16진수다: $COMMIT" >&2; exit 2; fi
+# 작업 나무가 기대 커밋이 아니면 gh를 받기도 전에 멈춘다. 추적하지 않는 파일은 본다고 하지 않는다.
+# 이 스크립트가 남긴 기록(results/)이 그런 파일이다.
+HEAD_NOW=$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)
+if [ "$HEAD_NOW" != "$COMMIT" ]; then
+  {
+    echo "이 작업 나무($ROOT)의 HEAD가 기대 커밋이 아니다. 아무것도 하지 않았다."
+    echo "  HEAD:      ${HEAD_NOW:-알 수 없다}"
+    echo "  기대 커밋: $COMMIT"
+    echo "태그 커밋의 작업 나무를 따로 만들어 거기서 돌려라."
+    echo "  git worktree add --detach <디렉터리> $TAG"
+    echo "  <디렉터리>/tools/release/check.sh -tag $TAG -commit $COMMIT ..."
+  } >&2
+  exit 2
+fi
+if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+  {
+    echo "이 작업 나무에서 추적하는 파일이 고쳐져 있다. 고친 도구로 검증하게 되므로 아무것도 하지 않았다."
+    git -C "$ROOT" status --short --untracked-files=no
+    echo "고친 것을 치우고 다시 돌려라."
+  } >&2
+  exit 2
+fi
 VER=${TAG#v}
 NOW=$(date -u +%Y%m%dT%H%M%SZ); STAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 [ -n "$RECORD" ] || RECORD="$ROOT/results/release-$NOW.md"
