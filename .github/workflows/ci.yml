@@ -2,6 +2,8 @@
 #
 # VM 시험은 여기서 돌리지 않는다. libvirt로 실제 VM을 띄우는데 러너 안에서는
 # 중첩 가상화가 되지 않는다. 그것은 사람이 손으로 돌린다.
+# 러너는 ubuntu-24.04로 고정한다. ubuntu-latest는 2026-10-19부터 Ubuntu 26을 가리킨다. 발행 워크플로가
+# 24.04에서 묶음을 만들므로 시험도 같은 이미지에서 돌린다. 이미지를 올리는 것은 시험한 뒤에 따로 한다.
 name: 시험
 
 on:
@@ -14,7 +16,7 @@ jobs:
   # 작업의 열쇠는 영문이어야 한다. 화면에 보이는 이름만 한글로 둔다.
   unit:
     name: 단위 시험
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -27,7 +29,7 @@ jobs:
   # 수 있고, 그것이 이 검사의 요점이다.
   vuln:
     name: 의존성 취약점 검사
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
@@ -37,7 +39,7 @@ jobs:
 
   tunnel:
     name: 통합 시험
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
