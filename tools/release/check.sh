@@ -4,7 +4,10 @@
 #   tools/release/check.sh -tag v0.2.0 -commit <태그가 가리키는 커밋 40자리> [-assets DIR] [-run ID] [-record 파일]
 #
 # 태그와 기대 커밋은 명시적으로 받는다. 이 머신의 태그를 믿지 않는다. 이 머신에 그 태그가
-# 있으면 기대 커밋과 같은지 함께 본다.
+# 있으면 기대 커밋과 같은지 함께 본다. -assets를 주면 그 디렉터리의 파일을 보고, 주지
+# 않으면 GitHub 릴리스에서 내려받는다. -run은 릴리스 워크플로의 실행 번호이고 기록에만
+# 적는다. -record는 기록 파일이고 기본은 results/release-<UTC 시각>.md다. 상대 경로는
+# 부른 자리를 기준으로 한다.
 #
 # **이 스크립트가 도는 작업 나무가 기대 커밋이어야 한다.** `sbom verify`와 `go version`이 이 작업
 # 나무의 도구로 돌고, gh의 판과 체크섬을 이 작업 나무의 release.yml에서 읽고, 기록 머리말이 이
@@ -14,10 +17,7 @@
 # 따로 만들어 거기서 돌린다.
 #
 #   git worktree add --detach /tmp/csn-<태그> <태그>
-#   /tmp/csn-<태그>/tools/release/check.sh -tag <태그> -commit $(git rev-parse <태그>^{commit}) -assets를 주면 그 디렉터리의 파일을 보고, 주지
-# 않으면 GitHub 릴리스에서 내려받는다. -run은 릴리스 워크플로의 실행 번호이고 기록에만
-# 적는다. -record는 기록 파일이고 기본은 results/release-<UTC 시각>.md다. 상대 경로는
-# 부른 자리를 기준으로 한다.
+#   /tmp/csn-<태그>/tools/release/check.sh -tag <태그> -commit $(git rev-parse <태그>^{commit})
 #
 # INSTALL.md의 「받은 묶음을 확인하기」를 그대로 밟는다. 자산의 수, 체크섬 목록이 두 묶음과
 # 정확히 같은지, 묶음마다 체크섬, 출처 증명과 부품 목록 증명을 온라인과 오프라인 묶음으로,
