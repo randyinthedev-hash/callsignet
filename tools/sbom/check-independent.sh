@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # SBOM을 만든 프로그램과 무관한 도구로 SPDX 2.3의 형식을 검사한다.
 #
 #   tools/sbom/check-independent.sh <sbom.spdx.json 또는 묶음 디렉터리>…

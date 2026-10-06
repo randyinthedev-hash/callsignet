@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 네임스페이스와 브리지를 지운다. 키는 _work에 남긴다.
 source "$(dirname "$0")/common.sh"
 need_root "$@"

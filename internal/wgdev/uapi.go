@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package wgdev는 TUN 인터페이스를 만들고 그 위에서 wg를 돌린다.
 package wgdev
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package guard는 csa가 지키는 서비스의 직통 경로를 닫는다.
 //
 // csa는 터널을 지나는 패킷만 본다. 다른 머신이 이 머신의 실제 IP로 붙으면 그

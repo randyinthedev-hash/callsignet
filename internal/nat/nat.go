@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package nat은 실제 IP와 터널 IP를 서로 바꾸는 nftables 표를 건다.
 //
 // 앱은 상대를 지금 쓰는 실제 IP로 부르고, 두 csa 사이에서 안쪽 패킷은 터널

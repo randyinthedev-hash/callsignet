@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 시험 스크립트가 함께 쓰는 것.
 
 # find_go는 go를 찾는다. 시험은 root로 도는데 sudo는 부르는 사람의 PATH를

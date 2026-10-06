@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package control은 도는 csa에 묻는 통로다.
 //
 // csa run이 유닉스 소켓을 하나 열고, csa status가 거기 붙어 묻는다. 물음은 한

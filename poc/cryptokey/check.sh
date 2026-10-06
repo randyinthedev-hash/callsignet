@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 허용 목록에 없는 출발지 IP로 보낸 패킷을 받는 쪽이 버리는지 확인한다.
 #
 # 커널 wg는 복호화한 패킷의 출발지 IP가 그 상대의 AllowedIPs 안에 없으면 버리면서

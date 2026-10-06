@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 밀 때마다 단위 시험과 통합 시험을 돌린다.
 #
 # VM 시험은 여기서 돌리지 않는다. libvirt로 실제 VM을 띄우는데 러너 안에서는

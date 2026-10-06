@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 설치 묶음을 만든다.
 #
 #   dist/pack.sh <csa 실행 파일> <아키텍처> [둘 자리]

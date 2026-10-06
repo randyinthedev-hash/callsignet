@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 공통 정의. 각 스크립트에서 source 한다.
 set -euo pipefail
 

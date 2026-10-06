@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 태그를 밀면 릴리스를 만들고 csa의 묶음과 출처 증명과 부품 목록을 붙인다.
 #
 # 붙이는 것은 정적으로 링크한 리눅스 바이너리를 담은 묶음이다. Rocky는 Ubuntu보다

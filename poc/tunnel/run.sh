@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # csa 둘이 터널을 세우고, 앱이 상대의 실제 IP로 불러도 터널로 나르는지 확인한다.
 #
 # 네임스페이스 둘을 만들어 브리지로 잇고, 각 네임스페이스에서 csa를 띄운 뒤

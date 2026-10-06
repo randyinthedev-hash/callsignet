@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // sbom은 설치 묶음의 부품 목록(SBOM)을 만들고 검사한다.
 //
 // 설계 문서의 「발행」 절이 정한 계약을 그대로 밟는다. SPDX 2.3

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 실험 실행 진입점. 대부분 root 권한을 요구한다.
 
 CK := poc/cryptokey

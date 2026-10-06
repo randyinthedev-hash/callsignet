@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 네임스페이스 둘을 만들고 wg로 잇는다.
 #
 # 받는 쪽은 보내는 쪽 항목에 허용 IP를 10.91.0.1 하나만 적는다. 보내는 쪽이 그 밖의

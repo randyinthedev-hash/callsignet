@@ -8,7 +8,9 @@ csa는 운영자가 적은 로컬 설정 파일로 움직인다. 머신마다 �
 
 ## 라이선스
 
-[Apache License 2.0](LICENSE)이다. csa 바이너리에 함께 들어가는 라이브러리의 고지는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)에 있다.
+Copyright 2026 Great Honor <randyinthedev@gmail.com>. 라이선스는 [Apache License 2.0](LICENSE)이다. 저자 이름의 표기는 [AUTHORS](AUTHORS)가 설명한다.
+
+csa 바이너리에 함께 들어가는 라이브러리의 고지는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)에 있다.
 
 ## 받기
 

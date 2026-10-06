@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 발행한 릴리스의 자산을 워크플로 밖에서 확인하고 기록을 남긴다.
 #
 #   tools/release/check.sh -tag v0.2.0 -commit <태그가 가리키는 커밋 40자리> [-assets DIR] [-run ID] [-record 파일]

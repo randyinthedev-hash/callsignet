@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package policy는 csa가 연결을 허용할지 판단하는 규칙을 다룬다.
 package policy
 

@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 깨끗한 VM에서 INSTALL.md대로 csa를 설치하고, 띄우고, 다음 판으로 올렸다가,
 # 앞 판으로 되돌리고, 뜨지 못하는 판으로 올리면 스스로 되돌리는지, 지우면
 # 깨끗이 지워지는지 본다.

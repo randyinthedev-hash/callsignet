@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 준비물을 점검한다. root 권한은 필요 없다.
 source "$(dirname "$0")/common.sh"
 ok=0

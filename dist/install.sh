@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # csa를 설치하고, 올리고, 되돌린다.
 #
 # 이 스크립트는 설치 묶음 안에 들어 있다. 묶음을 푼 자리에서 부른다. 묶음에는

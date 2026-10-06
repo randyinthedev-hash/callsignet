@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # tools/release/check.sh의 시험이다. GitHub에 닿지 않는다. gh는 대역이고 자산은 여기서 만든다.
 #
 # 보는 것 넷이다. 검증에 실패한 묶음은 풀지도 실행하지도 않는다. 체크섬 목록에 묶음이

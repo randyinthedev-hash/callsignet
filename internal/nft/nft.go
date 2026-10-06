@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package nft는 nftables 표를 거는 두 패키지가 함께 쓰는 것을 담는다.
 //
 // csa는 nftables 표를 둘 만든다. 직통 경로를 닫는 표(guard)와 실제 IP와 터널

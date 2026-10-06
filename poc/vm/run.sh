@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 실제 VM 둘에서 csa를 돌려 네임스페이스가 밟지 못하는 것을 확인한다.
 #
 # 진짜 NIC에서 커널이 목적지가 바뀐 패킷의 경로를 다시 찾는지, 엄격한 역경로

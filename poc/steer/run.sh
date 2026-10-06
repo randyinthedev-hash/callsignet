@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+# SPDX-License-Identifier: Apache-2.0
 # 앱이 상대의 실제 IP와 포트로 불러도 csa 둘이 터널로 나르는지 확인한다.
 #
 # 설계는 이렇게 주장한다. 보내는 쪽 머신의 NAT 표가 상대의 실제 IP와 서비스

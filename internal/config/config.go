@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Great Honor <randyinthedev@gmail.com>
+// SPDX-License-Identifier: Apache-2.0
+
 // Package config는 csa가 읽는 설정 파일을 다룬다.
 //
 // 설정은 /etc/callsignet/ 아래에 셋으로 나뉜다. csa.toml은 이 머신 자신에 대한
