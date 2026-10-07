@@ -6,12 +6,6 @@
 
 csa는 운영자가 적은 로컬 설정 파일로 움직인다. 머신마다 하나 돌며 터널을 운영하고, 앱이 상대의 실제 IP로 부른 연결을 터널로 돌리고, 정책을 집행한다.
 
-## 라이선스
-
-Copyright 2026 Great Honor <randyinthedev@gmail.com>. 라이선스는 [Apache License 2.0](LICENSE)이다. 저자 이름의 표기는 [AUTHORS](AUTHORS)가 설명한다.
-
-csa 바이너리에 함께 들어가는 라이브러리의 고지는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)에 있다.
-
 ## 받기
 
 발행한 판은 [릴리스](https://github.com/randyinthedev-hash/callsignet/releases)에 있다. 아키텍처마다 설치 묶음 하나를 붙여 둔다. 묶음 안에 정적으로 링크한 실행 파일과 systemd 서비스 파일과 설치 스크립트와 라이선스가 함께 들어 있다. 설치하고 올리고 되돌리는 절차는 [INSTALL.md](INSTALL.md)에 있다. 버전마다 무엇을 만들었는지는 [RELEASE_NOTES.md](RELEASE_NOTES.md)에 있다.
@@ -67,3 +61,9 @@ sudo make steer
 ```
 
 준비물과 절차는 [poc/README.md](poc/README.md)에 적었다.
+
+## 라이선스와 더 보기
+
+Copyright 2026 Great Honor <randyinthedev@gmail.com>. 라이선스는 [Apache License 2.0](LICENSE)이다. 저자 이름의 표기는 [AUTHORS](AUTHORS)가 설명한다.
+
+csa 바이너리에 함께 들어가는 라이브러리의 고지는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)에 있다. [설계](design/README.md) · [설치](INSTALL.md) · [릴리스 노트](RELEASE_NOTES.md) · [릴리스](https://github.com/randyinthedev-hash/callsignet/releases) · [시험](TESTING.md) · [실험](poc/README.md) · [기여](CONTRIBUTING.md) · [보안](SECURITY.md) · [행동 강령](CODE_OF_CONDUCT.md)
